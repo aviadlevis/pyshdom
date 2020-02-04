@@ -1592,7 +1592,7 @@ C     outgoing radiance (RAD) at the point X0,Y0,Z0.
       REAL    SOURCE(*), TOTAL_EXT(NPTS)
       REAL    YLMDIR(NLM), YLMSUN(NLM), SINGSCAT(NUMPHASE)
       DOUBLE PRECISION SUNDIRLEG(0:NLEG)
-      REAL    MURAY, PHIRAY, MU2, PHI2, RADOUT
+      DOUBLE PRECISION MURAY, PHIRAY, MU2, PHI2, RADOUT
       DOUBLE PRECISION X0, Y0, Z0
       CHARACTER SRCTYPE*1, SFCTYPE*2
       
@@ -1885,7 +1885,7 @@ C             boundary then prepare for next cell
           DONE = .TRUE.
         ELSE IF (INEXTCELL .EQ. 0) THEN
           DONE = .TRUE.
-          CALL FIND_BOUNDARY_RADIANCE (XN, YN, MU2, PHI2, 
+          CALL FIND_BOUNDARY_RADIANCE (XN, YN, SNGL(MU2), SNGL(PHI2), 
      .                      IC, KFACE, GRIDPTR, GRIDPOS,
      .                      MAXNBC, NTOPPTS, NBOTPTS, BCPTR, BCRAD, 
      .                      NMU, NPHI0MAX, NPHI0, MU, PHI, WTDO, 

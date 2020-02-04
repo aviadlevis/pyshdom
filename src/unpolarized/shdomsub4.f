@@ -65,7 +65,7 @@ Cf2py intent(in) :: YLMSUN, PHASETAB
  
       
       INTEGER I, J, L, N
-      REAL    MURAY, PHIRAY, MU2, PHI2
+      DOUBLE PRECISION MURAY, PHIRAY, MU2, PHI2
       DOUBLE PRECISION X0, Y0, Z0
       DOUBLE PRECISION COSSCAT
       DOUBLE PRECISION U, R, PI 
@@ -118,7 +118,7 @@ C           Extrapolate ray to domain top if above
           STOP
         ENDIF
   
-        CALL YLMALL (MU2, PHI2, ML, MM, NCS, YLMDIR)
+        CALL YLMALL (SNGL(MU2), SNGL(PHI2), ML, MM, NCS, YLMDIR)
   
         IF (SRCTYPE .NE. 'T' .AND. DELTAM) THEN
             COSSCAT = SOLARMU*MU2 + SQRT((1.0-SOLARMU**2)*(1.0-MU2**2))
@@ -378,7 +378,7 @@ Cf2py intent(in) :: DPATH, DPTR, WEIGHTS
       INTEGER I, J, L, K
       INTEGER N, M, ME, MS, ND
       DOUBLE PRECISION  RAYGRAD(NBPTS,NUMDER)
-      REAL    MURAY, PHIRAY, MU2, PHI2
+      DOUBLE PRECISION  MURAY, PHIRAY, MU2, PHI2
       DOUBLE PRECISION X0, Y0, Z0, COSSCAT
       DOUBLE PRECISION U, R, PI
       REAL, ALLOCATABLE :: YLMDIR(:)
@@ -442,7 +442,7 @@ C             Extrapolate ray to domain top if above
           STOP
         ENDIF
 
-        CALL YLMALL (MU2, PHI2, ML, MM, NCS, YLMDIR)
+        CALL YLMALL (SNGL(MU2), SNGL(PHI2), ML, MM, NCS, YLMDIR)
 
         IF (SRCTYPE .NE. 'T') THEN
           COSSCAT = SOLARMU*MU2 + SQRT((1.0-SOLARMU**2)*(1.0-MU2**2))
@@ -548,7 +548,8 @@ C     outgoing radiance (RAD) at the point X0,Y0,Z0.
       REAL    SOURCE(*), RADIANCE(*), DSINGSCAT(DNUMPHASE)
       REAL    YLMDIR(NLM), YLMSUN(NLM), SINGSCAT(NUMPHASE)
       DOUBLE PRECISION SUNDIRLEG(0:NLEG)
-      REAL    MURAY, PHIRAY, MU2, PHI2, RADOUT, SRCSINGSCAT(8)
+      DOUBLE PRECISION MURAY, PHIRAY, MU2, PHI2
+      REAL    RADOUT, SRCSINGSCAT(8)
       REAL    SINGSCAT0(8), SINGSCAT1(8)
       DOUBLE PRECISION X0, Y0, Z0
       CHARACTER SRCTYPE*1, SFCTYPE*2
@@ -920,7 +921,7 @@ C             boundary then prepare for next cell
           DONE = .TRUE.
         ELSE IF (INEXTCELL .EQ. 0) THEN
           DONE = .TRUE.
-          CALL FIND_BOUNDARY_RADIANCE (XN, YN, MU2, PHI2, 
+          CALL FIND_BOUNDARY_RADIANCE (XN, YN, SNGL(MU2), SNGL(PHI2), 
      .                      IC, KFACE, GRIDPTR, GRIDPOS,
      .                      MAXNBC, NTOPPTS, NBOTPTS, BCPTR, BCRAD, 
      .                      NMU, NPHI0MAX, NPHI0, MU, PHI, WTDO, 

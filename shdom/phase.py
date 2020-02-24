@@ -765,7 +765,7 @@ class MiePolydisperse(object):
         veff_index = find_nearest(self.size_distribution.veff, veff)
 
         # Fortran style indexing
-        index = veff_index*self.size_distribution.nvetab + reff_index
+        index = veff_index*self.size_distribution.nretab + reff_index
         return self.legcoef[..., index]
 
     def get_angular_scattering(self, reff, veff, angles, phase_element=1):

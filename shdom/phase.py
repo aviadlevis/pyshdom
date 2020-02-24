@@ -796,7 +796,7 @@ class MiePolydisperse(object):
         veff_index = find_nearest(self.size_distribution.veff, veff)
 
         # Fortran style indexing
-        index = veff_index*self.size_distribution.nvetab + reff_index        
+        index = veff_index*self.size_distribution.nretab + reff_index        
 
         phase = core.transform_leg_to_phase(
             maxleg=self.maxleg,

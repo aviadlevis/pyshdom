@@ -752,7 +752,7 @@ class MediumEstimator(shdom.Medium):
     stokes_weights: list of floats
         Loss function weights for stokes vector components [I,Q,U,V].
     """
-    def __init__(self, grid=None, loss_type='l2', exact_single_scatter=False, stokes_weights=None):
+    def __init__(self, grid=None, loss_type='l2', exact_single_scatter=True, stokes_weights=None):
         super().__init__(grid)
         self._estimators = OrderedDict()
         self._num_parameters = []

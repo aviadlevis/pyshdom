@@ -752,7 +752,7 @@ class MediumEstimator(shdom.Medium):
     stokes_weights: list of floats
         Loss function weights for stokes vector components [I,Q,U,V].
     """
-    def __init__(self, grid=None, loss_type='l2', exact_single_scatter=True, stokes_weights=None):
+    def __init__(self, grid=None, loss_type='l2', exact_single_scatter=False, stokes_weights=None):
         super().__init__(grid)
         self._estimators = OrderedDict()
         self._num_parameters = []
@@ -925,19 +925,28 @@ class MediumEstimator(shdom.Medium):
         leg_table.pad(rte_solver._nleg)
         dleg = leg_table.data
         dnumphase = leg_table.numphase
-        dphasetab = core.precompute_phase_check(
+        
+        # zero the first term of the first component of the phase function
+        # gradient.
+        if dleg.ndim == 2:
+            dleg[0,:] = 0.0
+        elif dleg.ndim ==3:
+            dleg[0,0,:] = 0.0
+
+        dphasetab = core.precompute_phase_check_grad(
             negcheck=False,
             nstphase=rte_solver._nstphase,
             nstleg=rte_solver._nstleg,
             nscatangle=rte_solver._nscatangle,
             nstokes=rte_solver._nstokes,
-            numphase=dnumphase,
+            dnumphase=dnumphase,
             ml=rte_solver._ml,
             nlm=rte_solver._nlm,
             nleg=rte_solver._nleg,
-            legen=dleg,
+            dleg=dleg,
             deltam=rte_solver._deltam
-        )                
+        )
+
         return dext, dalb, diphase, dleg, dphasetab, dnumphase
 
     def compute_direct_derivative(self, rte_solver):
@@ -2058,6 +2067,7 @@ class LocalOptimizer(object):
             measurements=self.measurements,
             n_jobs=self.n_jobs
         )
+        print(state, gradient, loss)
         self._loss = loss
         self._images = images
         return loss, gradient

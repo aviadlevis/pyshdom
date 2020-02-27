@@ -105,7 +105,8 @@ F2PY_CORE_API = [
     'gradient_normcorr',
     'gradient_l2',
     'space_carve',
-    'precompute_phase_check'
+    'precompute_phase_check',
+    'precompute_phase_check_grad'
 ]
 
 def _run_command(cmd):

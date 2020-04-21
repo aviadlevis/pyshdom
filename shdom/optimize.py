@@ -1601,7 +1601,7 @@ class SummaryWriter(object):
             keyword arguments
         """
         timestr = time.strftime("%H%M%S")
-        path = os.path.join(self.tf_writer.log_dir,  timestr + '.ckpt')
+        path = os.path.join(self.tf_writer.logdir,  timestr + '.ckpt')
         self.optimizer.save_state(path)
         
     def loss_cbfn(self, kwargs):

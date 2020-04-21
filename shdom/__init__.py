@@ -635,6 +635,7 @@ from shdom.medium import *
 from shdom.sensor import *
 from shdom.rte_solver import *
 from shdom.optimize import *
+from shdom.dynamic_scene import *
 import shdom.generate as Generate
 
 

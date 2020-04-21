@@ -57,6 +57,10 @@ class OptimizationScript(object):
                             action='store_true',
                             help='Use the ground-truth cloud mask. This is an inverse crime which is \
                                   usefull for debugging/development.')
+        parser.add_argument('--reg_const',
+                            default=0,
+                            type=int,
+                            help='(default value: %(default)s) Regularization constant. reg_const=0 uses no regularization')
         parser.add_argument('--add_noise',
                             action='store_true',
                             help='currently only supports AirMSPI noise model. \
@@ -189,77 +193,65 @@ class OptimizationScript(object):
 
     def get_medium_estimator(self, measurements, ground_truth):
         """
-        Generate the medium estimator for optimization.
-
-        Parameters
-        ----------
-        measurements: shdom.Measurements
-            The acquired measurements.
-        ground_truth: shdom.Scatterer
-            The ground truth scatterer
-
-
-        Returns
-        -------
-        medium_estimator: shdom.MediumEstimator
-            A medium estimator object which defines the optimized parameters.
         """
-        wavelength = ground_truth.wavelength
-
-        # Define the grid for reconstruction
-        if self.args.use_forward_grid:
-            extinction_grid = ground_truth.extinction.grid
-            albedo_grid = ground_truth.albedo.grid
-            phase_grid = ground_truth.phase.grid
-        else:
-            extinction_grid = albedo_grid = phase_grid = self.cloud_generator.get_grid()
-        grid = extinction_grid + albedo_grid + phase_grid
+        wavelength = measurements.wavelength
 
         # Find a cloud mask for non-cloudy grid points
         if self.args.use_forward_mask:
-            mask = ground_truth.get_mask(threshold=0.001)
+            mask_list = ground_truth.get_mask(threshold=0.001)
         else:
-            carver = shdom.SpaceCarver(measurements)
-            mask = carver.carve(grid, agreement=0.7, thresholds=self.args.radiance_threshold)
-            show_mask = 0
+            grid = ground_truth.get_extinction()[4].grid
+            dynamic_carver = shdom.DynamicSpaceCarver(measurements)
+            mask, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.8,
+                                time_list = ground_truth.time_list, thresholds=self.args.radiance_threshold)
+            mask_list = [mask]*ground_truth.num_scatterers
+            show_mask=0
             if show_mask:
-                a = (mask.data).astype(int)
-                b = ((ground_truth.get_mask(threshold=0.001).data)).astype(int)
-                print(np.sum(np.abs(a - b)))
+                a = (mask_list[0].data).astype(int)
+                aa = (mask_list[6].data).astype(int)
+                b = ((ground_truth.get_mask(threshold=0.001)[0].data)).astype(int)
+                print(np.sum(np.abs(a - aa)))
                 shdom.cloud_plot(a)
+                shdom.cloud_plot(aa)
                 shdom.cloud_plot(b)
 
-        # Define the known albedo and phase: either ground-truth or specified, but it is not optimized.
-        if self.args.use_forward_albedo is False or self.args.use_forward_phase is False:
-            table_path = self.args.mie_base_path.replace('<wavelength>', '{}'.format(shdom.int_round(wavelength)))
-            self.cloud_generator.add_mie(table_path)
-
         if self.args.use_forward_albedo:
-            albedo = ground_truth.albedo
+            albedo = ground_truth.get_albedo()
         else:
-            albedo = self.cloud_generator.get_albedo(wavelength, albedo_grid)
+            # albedo = self.cloud_generator.get_albedo(wavelength, albedo_grid)
+            NotImplemented()
 
         if self.args.use_forward_phase:
-            phase = ground_truth.phase
+            phase = ground_truth.get_phase()
         else:
-            phase = self.cloud_generator.get_phase(wavelength, phase_grid)
+            NotImplemented()
+        # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
 
-        extinction = shdom.GridDataEstimator(self.cloud_generator.get_extinction(grid=grid),
-                                             min_bound=1e-3,
-                                             max_bound=2e2)
-        cloud_estimator = shdom.OpticalScattererEstimator(wavelength, extinction, albedo, phase)
-        cloud_estimator.set_mask(mask)
+        if self.args.use_forward_grid:
+            extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(),
+                                                 min_bound=1e-3,
+                                                 max_bound=2e2)
+        else:
+            if self.args.use_forward_mask:
+                grid = ground_truth.get_extinction()[4].grid
+                dynamic_carver = shdom.DynamicSpaceCarver(measurements)
+                _, dynamic_grid, _ = dynamic_carver.carve(grid, agreement=0.8,
+                                                          time_list=ground_truth.time_list,
+                                                          thresholds=self.args.radiance_threshold)
+            else:
+                dynamic_extinction = []
+                for grid, ext in zip(dynamic_grid,ground_truth.get_extinction()):
+                    dynamic_extinction.append(shdom.GridData(grid.grid,ext.data))
+                extinction = shdom.DynamicGridDataEstimator(dynamic_extinction,
+                                                 min_bound=1e-3,
+                                                 max_bound=2e2)
+
+        cloud_estimator = shdom.DynamicOpticalScattererEstimator(wavelength, extinction, albedo, phase)
+        cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)
-        medium_estimator = shdom.MediumEstimator()
-        if self.args.add_rayleigh:
-            air = self.air_generator.get_scatterer(wavelength)
-            medium_estimator.set_grid(cloud_estimator.grid + air.grid)
-            medium_estimator.add_scatterer(air, 'air')
-        else:
-            medium_estimator.set_grid(cloud_estimator.grid)
-
-        medium_estimator.add_scatterer(cloud_estimator, self.scatterer_name)
+        air = self.air_generator.get_scatterer(wavelength)
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air)
 
         return medium_estimator
 
@@ -282,7 +274,7 @@ class OptimizationScript(object):
         writer = None
         if self.args.log is not None:
             log_dir = os.path.join(self.args.input_dir, 'logs', self.args.log + '-' + time.strftime("%d-%b-%Y-%H:%M:%S"))
-            writer = shdom.SummaryWriter(log_dir)
+            writer = shdom.DynamicSummaryWriter(log_dir)
             writer.save_checkpoints(ckpt_period=20 * 60)
             writer.monitor_loss()
             writer.monitor_shdom_iterations()
@@ -307,7 +299,7 @@ class OptimizationScript(object):
 
         Returns
         -------
-        ground_truth: shdom.OpticalScatterer
+        ground_truth: shdom.DynamicScatterer
             The ground truth scatterer
         rte_solver: shdom.RteSolverArray
             The rte solver with the numerical and scene parameters
@@ -315,13 +307,13 @@ class OptimizationScript(object):
             The acquired measurements
         """
         # Load forward model and measurements
-        medium, rte_solver, measurements = shdom.load_forward_model(input_directory)
+        dynamic_medium, dynamic_solver, measurements = shdom.load_dynamic_forward_model(input_directory)
 
         # Get optical medium ground-truth
-        ground_truth = medium.get_scatterer(self.scatterer_name)
-        if isinstance(ground_truth, shdom.MicrophysicalScatterer):
-            ground_truth = ground_truth.get_optical_scatterer(measurements.wavelength)
-        return ground_truth, rte_solver, measurements
+        dynamic_scatterer = dynamic_medium.get_dynamic_scatterer()
+        if dynamic_scatterer.type == 'MicrophysicalScatterer':
+            ground_truth = dynamic_scatterer.get_dynamic_optical_scatterer(measurements.wavelength)
+        return ground_truth, dynamic_solver, measurements
 
     def get_optimizer(self):
         """
@@ -334,18 +326,26 @@ class OptimizationScript(object):
         """
         self.parse_arguments()
 
-        ground_truth, rte_solver, measurements = self.load_forward_model(self.args.input_dir)
+        ground_truth, dynamic_solver, measurements = self.load_forward_model(self.args.input_dir)
+
+        #dynamic_solver load and save problem
+        scene_params = shdom.SceneParameters(
+            wavelength=measurements.wavelength,
+            source=shdom.SolarSource(azimuth=65, zenith=135)
+        )
+        numerical_params = shdom.NumericalParameters(num_mu_bins=8,num_phi_bins=16)
+        dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params,numerical_params=numerical_params)
 
         # Add noise (currently only supports AirMSPI noise model)
         if self.args.add_noise:
-            noise = shdom.AirMSPINoise()
-            measurements = noise.apply(measurements)
+            measurements.set_noise(shdom.AirMSPINoise())
 
         # Initialize a Medium Estimator
         medium_estimator = self.get_medium_estimator(measurements, ground_truth)
 
         # Initialize TensorboardX logger
         writer = self.get_summary_writer(measurements, ground_truth)
+        regularization_const = self.args.reg_const
 
         # Initialize a LocalOptimizer
         options = {
@@ -353,11 +353,12 @@ class OptimizationScript(object):
             'maxls': self.args.maxls,
             'disp': self.args.disp,
             'gtol': self.args.gtol,
-            'ftol': self.args.ftol
+            'ftol': self.args.ftol,
         }
-        optimizer = shdom.LocalOptimizer('L-BFGS-B', options=options, n_jobs=self.args.n_jobs)
+        optimizer = shdom.DynamicLocalOptimizer('L-BFGS-B', options=options, n_jobs=self.args.n_jobs,
+                                                regularization_const=regularization_const)
         optimizer.set_measurements(measurements)
-        optimizer.set_rte_solver(rte_solver)
+        optimizer.set_dynamic_solver(dynamic_solver)
         optimizer.set_medium_estimator(medium_estimator)
         optimizer.set_writer(writer)
 

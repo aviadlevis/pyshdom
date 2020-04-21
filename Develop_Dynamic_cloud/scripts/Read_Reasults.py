@@ -2,32 +2,14 @@ import os, time
 import numpy as np
 import argparse
 import shdom
+import scipy.io as sio
 
 
-class OptimizationScript(object):
-    """
-    Optimize: Extinction
-    --------------------
-    Estimate the extinction coefficient based on monochrome radiance measurements.
-    In this script, the phase function, albedo and rayleigh scattering are assumed known and are not estimated.
-
-    Measurements are simulated measurements using a forward rendering script
-    (e.g. scripts/render_radiance_toa.py).
-
-    For example usage see the README.md
-
-    For information about the command line flags see:
-      python scripts/optimize_extinction_lbfgs.py --help
-
-    Parameters
-    ----------
-    scatterer_name: str
-        The name of the scatterer that will be optimized.
-    """
+class ReadReasultsScript(object):
     def __init__(self, scatterer_name='cloud'):
         self.scatterer_name = scatterer_name
 
-    def optimization_args(self, parser):
+    def read_reasults_args(self, parser):
         """
         Add common optimization arguments that may be shared across scripts.
 
@@ -44,7 +26,7 @@ class OptimizationScript(object):
         parser.add_argument('--input_dir',
                             help='Path to an input directory where the forward modeling parameters are be saved. \
                                   This directory will be used to save the optimization results and progress.')
-        parser.add_argument('--reload_path',
+        parser.add_argument('--load_path',
                             help='Reload an optimizer or checkpoint and continue optimizing from that point.')
         parser.add_argument('--log',
                             help='Write intermediate TensorBoardX results. \
@@ -127,7 +109,7 @@ class OptimizationScript(object):
                             action='store_true',
                             help='Use the ground-truth phase reconstruction.')
         parser.add_argument('--radiance_threshold',
-                            default=[0.02],
+                            default=[0.05],
                             nargs='+',
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
@@ -153,7 +135,7 @@ class OptimizationScript(object):
             Creates the scattering due to air molecules
         """
         parser = argparse.ArgumentParser()
-        parser = self.optimization_args(parser)
+        parser = self.read_reasults_args(parser)
         parser = self.medium_args(parser)
 
         # Additional arguments to the parser
@@ -189,77 +171,46 @@ class OptimizationScript(object):
 
     def get_medium_estimator(self, measurements, ground_truth):
         """
-        Generate the medium estimator for optimization.
-
-        Parameters
-        ----------
-        measurements: shdom.Measurements
-            The acquired measurements.
-        ground_truth: shdom.Scatterer
-            The ground truth scatterer
-
-
-        Returns
-        -------
-        medium_estimator: shdom.MediumEstimator
-            A medium estimator object which defines the optimized parameters.
         """
-        wavelength = ground_truth.wavelength
+        wavelength = measurements.wavelength
 
-        # Define the grid for reconstruction
-        if self.args.use_forward_grid:
-            extinction_grid = ground_truth.extinction.grid
-            albedo_grid = ground_truth.albedo.grid
-            phase_grid = ground_truth.phase.grid
-        else:
-            extinction_grid = albedo_grid = phase_grid = self.cloud_generator.get_grid()
-        grid = extinction_grid + albedo_grid + phase_grid
 
         # Find a cloud mask for non-cloudy grid points
         if self.args.use_forward_mask:
-            mask = ground_truth.get_mask(threshold=0.001)
+            mask_list = ground_truth.get_mask(threshold=1.0)
         else:
-            carver = shdom.SpaceCarver(measurements)
-            mask = carver.carve(grid, agreement=0.7, thresholds=self.args.radiance_threshold)
-            show_mask = 0
-            if show_mask:
-                a = (mask.data).astype(int)
-                b = ((ground_truth.get_mask(threshold=0.001).data)).astype(int)
-                print(np.sum(np.abs(a - b)))
-                shdom.cloud_plot(a)
-                shdom.cloud_plot(b)
+            # carver = shdom.SpaceCarver(measurements)
+            # mask = carver.carve(grid, agreement=0.9, thresholds=self.args.radiance_threshold)
+            mask_list = []
 
         # Define the known albedo and phase: either ground-truth or specified, but it is not optimized.
-        if self.args.use_forward_albedo is False or self.args.use_forward_phase is False:
-            table_path = self.args.mie_base_path.replace('<wavelength>', '{}'.format(shdom.int_round(wavelength)))
-            self.cloud_generator.add_mie(table_path)
+        # if self.args.use_forward_albedo is False or self.args.use_forward_phase is False:
+        #     table_path = self.args.mie_base_path.replace('<wavelength>', '{}'.format(shdom.int_round(wavelength)))
+        #     self.cloud_generator.add_mie(table_path)
+        # else:
+        #     NotImplemented()
 
         if self.args.use_forward_albedo:
-            albedo = ground_truth.albedo
+            albedo = ground_truth.get_albedo()
         else:
-            albedo = self.cloud_generator.get_albedo(wavelength, albedo_grid)
+            # albedo = self.cloud_generator.get_albedo(wavelength, albedo_grid)
+            NotImplemented()
 
         if self.args.use_forward_phase:
-            phase = ground_truth.phase
+            phase = ground_truth.get_phase()
         else:
-            phase = self.cloud_generator.get_phase(wavelength, phase_grid)
+            NotImplemented()
+        # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
 
-        extinction = shdom.GridDataEstimator(self.cloud_generator.get_extinction(grid=grid),
+        extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(),
                                              min_bound=1e-3,
                                              max_bound=2e2)
-        cloud_estimator = shdom.OpticalScattererEstimator(wavelength, extinction, albedo, phase)
-        cloud_estimator.set_mask(mask)
+        cloud_estimator = shdom.DynamicOpticalScattererEstimator(wavelength, extinction, albedo, phase)
+        cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)
-        medium_estimator = shdom.MediumEstimator()
-        if self.args.add_rayleigh:
-            air = self.air_generator.get_scatterer(wavelength)
-            medium_estimator.set_grid(cloud_estimator.grid + air.grid)
-            medium_estimator.add_scatterer(air, 'air')
-        else:
-            medium_estimator.set_grid(cloud_estimator.grid)
-
-        medium_estimator.add_scatterer(cloud_estimator, self.scatterer_name)
+        air = self.air_generator.get_scatterer(wavelength)
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air)
 
         return medium_estimator
 
@@ -307,7 +258,7 @@ class OptimizationScript(object):
 
         Returns
         -------
-        ground_truth: shdom.OpticalScatterer
+        ground_truth: shdom.DynamicScatterer
             The ground truth scatterer
         rte_solver: shdom.RteSolverArray
             The rte solver with the numerical and scene parameters
@@ -315,31 +266,30 @@ class OptimizationScript(object):
             The acquired measurements
         """
         # Load forward model and measurements
-        medium, rte_solver, measurements = shdom.load_forward_model(input_directory)
+        dynamic_medium, dynamic_solver, measurements = shdom.load_dynamic_forward_model(input_directory)
 
         # Get optical medium ground-truth
-        ground_truth = medium.get_scatterer(self.scatterer_name)
-        if isinstance(ground_truth, shdom.MicrophysicalScatterer):
-            ground_truth = ground_truth.get_optical_scatterer(measurements.wavelength)
-        return ground_truth, rte_solver, measurements
+        dynamic_scatterer = dynamic_medium.get_dynamic_scatterer()
+        if dynamic_scatterer.type == 'MicrophysicalScatterer':
+            ground_truth = dynamic_scatterer.get_dynamic_optical_scatterer(measurements.wavelength)
+        return ground_truth, dynamic_solver, measurements
 
-    def get_optimizer(self):
-        """
-        Define an Optimizer object
-
-        Returns
-        -------
-        optimizer: shdom.Optimizer object
-            An optimizer object.
-        """
+    def get_results(self):
         self.parse_arguments()
 
-        ground_truth, rte_solver, measurements = self.load_forward_model(self.args.input_dir)
+        ground_truth, dynamic_solver, measurements = self.load_forward_model(self.args.input_dir)
+
+        #dynamic_solver load and save problem
+        scene_params = shdom.SceneParameters(
+            wavelength=measurements.wavelength,
+            source=shdom.SolarSource(azimuth=65, zenith=135)
+        )
+        numerical_params = shdom.NumericalParameters()
+        dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params,numerical_params=numerical_params)
 
         # Add noise (currently only supports AirMSPI noise model)
         if self.args.add_noise:
-            noise = shdom.AirMSPINoise()
-            measurements = noise.apply(measurements)
+            measurements.set_noise(shdom.AirMSPINoise())
 
         # Initialize a Medium Estimator
         medium_estimator = self.get_medium_estimator(measurements, ground_truth)
@@ -355,48 +305,51 @@ class OptimizationScript(object):
             'gtol': self.args.gtol,
             'ftol': self.args.ftol
         }
-        optimizer = shdom.LocalOptimizer('L-BFGS-B', options=options, n_jobs=self.args.n_jobs)
+        optimizer = shdom.DynamicLocalOptimizer('L-BFGS-B', options=options, n_jobs=self.args.n_jobs)
         optimizer.set_measurements(measurements)
-        optimizer.set_rte_solver(rte_solver)
+        optimizer.set_dynamic_solver(dynamic_solver)
         optimizer.set_medium_estimator(medium_estimator)
         optimizer.set_writer(writer)
 
         # Reload previous state
-        if self.args.reload_path is not None:
-            optimizer.load_state(self.args.reload_path)
-        return optimizer
+        if self.args.load_path is not None:
+            optimizer.load_results(self.args.load_path)
+        else:
+            NotImplemented()
+
+        estimated_dynamic_medium = optimizer.medium.dynamic_medium_estimator
+        return ground_truth, estimated_dynamic_medium
+
+    def extinction_compare(self,ground_truth, estimated_dynamic_medium):
+        gt_extinction_stack = []
+        estimated_extinction_stack = []
+
+        for gt_extinction, medium_estimator in zip(ground_truth.get_extinction(), estimated_dynamic_medium):
+            estimated_extinction = medium_estimator.scatterers[self.scatterer_name].extinction.data
+            gt_extinction_stack.append(gt_extinction.data)
+            estimated_extinction_stack.append(estimated_extinction)
+
+        gt_extinction_stack = np.stack(gt_extinction_stack, axis=3)
+        estimated_extinction_stack = np.stack(estimated_extinction_stack, axis=3)
+
+        sio.savemat('gt_extinction.mat', {'gt_extinction': gt_extinction_stack})
+        sio.savemat('estimated_extinction.mat', {'estimated_extinction': estimated_extinction_stack})
+
+
 
     def main(self):
         """
         Main optimization script
         """
-        local_optimizer = self.get_optimizer()
+        ground_truth, estimated_dynamic_medium = self.get_results()
+        self.extinction_compare(ground_truth, estimated_dynamic_medium)
 
-        # Optimization process
-        num_global_iter = 1
-        if self.args.globalopt:
-            global_optimizer = shdom.GlobalOptimizer(local_optimizer=local_optimizer)
-            result = global_optimizer.minimize(niter_success=20, T=1e-3)
-            num_global_iter = result.nit
-            result = result.lowest_optimization_result
-            local_optimizer.set_state(result.x)
-        else:
-            result = local_optimizer.minimize()
 
-        print('\n------------------ Optimization Finished ------------------\n')
-        print('Number global iterations: {}'.format(num_global_iter))
-        print('Success: {}'.format(result.success))
-        print('Message: {}'.format(result.message))
-        print('Final loss: {}'.format(result.fun))
-        print('Number iterations: {}'.format(result.nit))
 
-        # Save optimizer state
-        save_dir = local_optimizer.writer.dir if self.args.log is not None else self.args.input_dir
-        local_optimizer.save_state(os.path.join(save_dir, 'final_state.ckpt'))
 
 
 if __name__ == "__main__":
-    script = OptimizationScript(scatterer_name='cloud')
+    script = ReadReasultsScript(scatterer_name='cloud')
     script.main()
 
 

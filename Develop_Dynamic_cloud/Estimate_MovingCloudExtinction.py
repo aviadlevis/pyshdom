@@ -127,7 +127,7 @@ class OptimizationScript(object):
                             action='store_true',
                             help='Use the ground-truth phase reconstruction.')
         parser.add_argument('--radiance_threshold',
-                            default=[0.02],
+                            default=[0.05],
                             nargs='+',
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
@@ -217,17 +217,10 @@ class OptimizationScript(object):
 
         # Find a cloud mask for non-cloudy grid points
         if self.args.use_forward_mask:
-            mask = ground_truth.get_mask(threshold=0.001)
+            mask = ground_truth.get_mask(threshold=1.0)
         else:
             carver = shdom.SpaceCarver(measurements)
-            mask = carver.carve(grid, agreement=0.7, thresholds=self.args.radiance_threshold)
-            show_mask = 0
-            if show_mask:
-                a = (mask.data).astype(int)
-                b = ((ground_truth.get_mask(threshold=0.001).data)).astype(int)
-                print(np.sum(np.abs(a - b)))
-                shdom.cloud_plot(a)
-                shdom.cloud_plot(b)
+            mask = carver.carve(grid, agreement=0.9, thresholds=self.args.radiance_threshold)
 
         # Define the known albedo and phase: either ground-truth or specified, but it is not optimized.
         if self.args.use_forward_albedo is False or self.args.use_forward_phase is False:
@@ -315,13 +308,14 @@ class OptimizationScript(object):
             The acquired measurements
         """
         # Load forward model and measurements
-        medium, rte_solver, measurements = shdom.load_forward_model(input_directory)
+        dynamic_medium, dynamic_solver, measurements = shdom.load_dynamic_forward_model(input_directory)
 
         # Get optical medium ground-truth
-        ground_truth = medium.get_scatterer(self.scatterer_name)
-        if isinstance(ground_truth, shdom.MicrophysicalScatterer):
-            ground_truth = ground_truth.get_optical_scatterer(measurements.wavelength)
-        return ground_truth, rte_solver, measurements
+        dynamic_scatterer = dynamic_medium.get_dynamic_scatterer()
+        ground_truth = []
+        if dynamic_scatterer.type == 'MicrophysicalScatterer':
+            ground_truth = dynamic_scatterer.get_optical_scatterer(measurements.wavelength)
+        return ground_truth, dynamic_solver, measurements
 
     def get_optimizer(self):
         """
@@ -338,8 +332,7 @@ class OptimizationScript(object):
 
         # Add noise (currently only supports AirMSPI noise model)
         if self.args.add_noise:
-            noise = shdom.AirMSPINoise()
-            measurements = noise.apply(measurements)
+            measurements.set_noise(shdom.AirMSPINoise())
 
         # Initialize a Medium Estimator
         medium_estimator = self.get_medium_estimator(measurements, ground_truth)

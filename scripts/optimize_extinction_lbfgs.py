@@ -187,6 +187,14 @@ class OptimizationScript(object):
         self.cloud_generator = CloudGenerator(self.args) if CloudGenerator is not None else None
         self.air_generator = AirGenerator(self.args) if AirGenerator is not None else None
 
+    def save_args(self,log_dir):
+        text_file = open(log_dir+"/Input_args.txt", "w")
+        for data in self.args.__dict__:
+            text_file.write("{} : {}\n".format(data, self.args.__dict__[data]))
+        text_file.close()
+
+
+
     def get_medium_estimator(self, measurements, ground_truth):
         """
         Generate the medium estimator for optimization.
@@ -294,6 +302,8 @@ class OptimizationScript(object):
             writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.4)
             writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=1.0))
 
+            # save parse_arguments
+            self.save_args(log_dir)
         return writer
 
     def load_forward_model(self, input_directory):

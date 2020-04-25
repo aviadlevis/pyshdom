@@ -83,7 +83,7 @@ def load_dynamic_forward_model(directory):
     measurements.load(path=measurements_path)
 
     # Load RteSolver according to numerical and scene parameters
-    solver_path = os.path.join(directory, 'dynamic_solver_parameters')
+    solver_path = os.path.join(directory, 'solver_parameters')
     solver = DynamicRteSolver()
     if os.path.exists(solver_path):
         solver.load_params(path=os.path.join(directory, 'solver_parameters'))
@@ -129,7 +129,7 @@ class DynamicScatterer(object):
         self._time_list = []
         self._type = None
 
-    def get_velocity(self, time = None):
+    def get_velocity(self):
         assert self._temporary_scatterer_list is not None and self._num_scatterers > 1,\
             'Dynamic Scatterer should have more than 1 scatterer'
         scatterer_location = []
@@ -139,11 +139,8 @@ class DynamicScatterer(object):
         scatterer_location = np.asarray(scatterer_location)
         time_list = np.asarray(self._time_list).reshape((-1,1))
         scatterer_velocity_list = (scatterer_location[1:,:] - scatterer_location[:-1,:]) / (time_list[1:] - time_list[:-1])
-        if time is None:
-            return scatterer_velocity_list
-        else:
-            velocity_inter = interp1d(time_list, scatterer_velocity_list)
-            return velocity_inter(time)
+        return scatterer_velocity_list
+
 
     def add_temporary_scatterer(self, temporary_scatterer_list):
         if not isinstance(temporary_scatterer_list,list):
@@ -292,7 +289,7 @@ class DynamicScatterer(object):
             phase_list.append(scatterer.phase)
         return phase_list
 
-    def get_extinction(self):
+    def get_extinction(self,dynamic_grid=None):
         if self._type == 'MicrophysicalScatterer':
             dynamic_scatterer = self.get_dynamic_optical_scatterer(self._wavelength)
         elif self._type == 'OpticalScatterer':
@@ -300,10 +297,14 @@ class DynamicScatterer(object):
         else:
             assert 'Scatterer type is not supported'
         extinction_list = []
-        for temporal_scatterer in dynamic_scatterer._temporary_scatterer_list:
+        for i, temporal_scatterer in enumerate(dynamic_scatterer._temporary_scatterer_list):
             scatterer = temporal_scatterer.get_scatterer()
             data = scatterer.extinction.data
-            extinction_list.append(shdom.GridData(scatterer.grid, data))
+            grid = scatterer.grid
+            extinction = shdom.GridData(grid, data)
+            if dynamic_grid is not None:
+                extinction = extinction.resample(dynamic_grid[i])
+            extinction_list.append(extinction)
         return extinction_list
 
 
@@ -479,11 +480,27 @@ class DynamicRteSolver(shdom.RteSolverArray):
             self._wavelength = [dynamic_medium.wavelength]
         dynamic_medium_list = dynamic_medium.get_dynamic_medium()
         for medium in dynamic_medium_list:
-            rte_solver = shdom.RteSolver(self._scene_params, self._numerical_params)
-            rte_solver.set_scene(self._scene_params)
-            rte_solver.set_numerics(self._numerical_params)
+            rte_solver = shdom.RteSolver()
+            if self._scene_params and self._numerical_params:
+                rte_solver.set_scene(self._scene_params)
+                rte_solver.set_numerics(self._numerical_params)
             rte_solver.set_medium(medium)
             self.add_dynamic_solver(rte_solver)
+
+    def replace_dynamic_medium(self, dynamic_medium):
+        assert isinstance(dynamic_medium, DynamicMedium) or isinstance(dynamic_medium, DynamicMediumEstimator), ' dynamic_medium type is wrong'
+        self._dynamic_medium = dynamic_medium
+
+        if isinstance(dynamic_medium.wavelength,list):
+            self._wavelength = dynamic_medium.wavelength
+        else:
+            self._wavelength = [dynamic_medium.wavelength]
+        dynamic_medium_list = dynamic_medium.get_dynamic_medium()
+        for medium, rte_solver  in zip(dynamic_medium_list,self.solver_list):
+            rte_solver.set_medium(medium)
+
+
+
 
     def add_dynamic_solver(self, rte_solver):
         """
@@ -512,17 +529,17 @@ class DynamicRteSolver(shdom.RteSolverArray):
                 self._name.append(solver.name)
                 self._num_solvers += 1
 
-    @property
-    def scene_params(self):
-        return self._scene_params
+    # @property
+    # def scene_params(self):
+    #     return self._scene_params
+    #
+    # @property
+    # def numerical_params(self):
+    #     return self._numerical_params
 
-    @property
-    def numerical_params(self):
-        return self._numerical_params
-
-    @property
-    def num_stokes(self):
-        return self._num_stokes
+    # @property
+    # def num_stokes(self):
+    #     return self._num_stokes
 
     @property
     def dynamic_medium(self):
@@ -637,7 +654,7 @@ class DynamicMediumEstimator(object):
         else:
             state_gradient = np.asarray(state_gradient)
 
-        return state_gradient, loss, images
+        return state_gradient, loss/len(measurements), images
 
     def compute_gradient_regularization(self, regularization_type='l2'):
         estimated_extinction_stack = []
@@ -649,6 +666,9 @@ class DynamicMediumEstimator(object):
         grad[:, 1:] += 2*(dynamic_estimated_extinction[:,1:] - dynamic_estimated_extinction[:,:-1])
         grad = np.reshape(grad,(-1,), order='F')
         return grad
+    # def scatterer_velocity_estimate(self):
+
+
 
     def compute_direct_derivative(self, dynamic_solver):
         for ind, medium_estimator in enumerate(self._dynamic_medium_estimator):
@@ -856,7 +876,7 @@ class DynamicLocalOptimizer(object):
         #     'RteSolver has {} solvers, Measurements have {} channels and Medium has {} wavelengths'.format(
         #         self.rte_solver.num_solvers, self.measurements.num_channels, self.medium.num_wavelengths)
 
-        self.rte_solver.set_dynamic_medium(self.medium)
+        self.rte_solver.replace_dynamic_medium(self.medium)
         self.rte_solver.init_solution()
         self.medium.compute_direct_derivative(self.rte_solver)
         self._num_parameters = []
@@ -899,7 +919,7 @@ class DynamicLocalOptimizer(object):
             The state of the medium estimator
         """
         self.medium.set_state(state)
-        self.rte_solver.set_dynamic_medium(self.medium)
+        self.rte_solver.replace_dynamic_medium(self.medium)
         if self._init_solution is False:
             self.rte_solver.make_direct()
         self.rte_solver.solve(maxiter=100, init_solution=self._init_solution, verbose=False)
@@ -1515,7 +1535,7 @@ class DynamicSpaceCarver(object):
             self._projections = [measurements.camera.projection]
         self._images = measurements.images
 
-    def carve(self, grid, thresholds,time_list, agreement=0.75):
+    def carve(self, grid, thresholds,time_list, agreement=0.75, vx_max=5, vy_max=5, gt_velocity = None):
         """
         Carves out the cloud geometry on the grid.
         A threshold on radiances is used to produce a pixel mask and preform space carving.
@@ -1549,13 +1569,18 @@ class DynamicSpaceCarver(object):
                 thresholds.size, len(self._images))
         best_match = -np.inf
 
-
-        for vx in np.linspace(3, 4, num=1):
-            for vy in np.linspace(2, 3, num=1):
+        if not gt_velocity:
+            vx_vec = np.linspace(-vx_max, vx_max, num=20)
+            vy_vec = np.linspace(-vy_max, vy_max, num=20)
+        else:
+            vx_vec = gt_velocity[0]
+            vy_vec = gt_velocity[1]
+        for vx in vx_vec:
+            for vy in vy_vec:
                 dynamic_grid = []
                 volume = np.zeros((grid.nx, grid.ny, grid.nz))
                 for projection, image, threshold, time in zip(self._projections, self._images, thresholds,time_list):
-                    shift = 1e-3 *time * np.array([vx,vy,0])#km
+                    shift = 1e-3 * time * np.array([vx,vy,0]) #km
                     shifted_grid = shdom.Grid(x=grid.x + shift[0], y=grid.y + shift[1],
                                z=grid.z + shift[2])
                     self._rte_solver.set_grid(shifted_grid)
@@ -1593,7 +1618,7 @@ class DynamicSpaceCarver(object):
                         npix=projection.npix,
                     )
                     volume += carved_volume.reshape(grid.nx, grid.ny, grid.nz)
-                    dynamic_grid.append(shdom.GridData(shifted_grid, volume))
+                    dynamic_grid.append(shdom.GridData(shifted_grid, volume).grid)
                 volume = volume * 1.0 / len(self._images)
                 match = np.sum(volume > agreement)
 
@@ -1603,8 +1628,11 @@ class DynamicSpaceCarver(object):
                     mask = volume > agreement
                     best_dynamic_grid = dynamic_grid
 
-        mask = shdom.GridData(grid, mask)
-        return mask, best_dynamic_grid, cloud_velocity
+        mask_list = []
+        for grid in best_dynamic_grid:
+            mask_list.append(shdom.GridData(grid, mask))
+
+        return mask_list, best_dynamic_grid, cloud_velocity
 
     @property
     def grid(self):

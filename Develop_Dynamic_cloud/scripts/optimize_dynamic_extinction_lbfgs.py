@@ -124,6 +124,9 @@ class OptimizationScript(object):
         parser: argparse.ArgumentParser()
             parser initialized with basic arguments that are common to most rendering scripts.
         """
+        parser.add_argument('--use_forward_cloud_velocity',
+                            action='store_true',
+                            help='Use the ground truth cloud velocity.')
         parser.add_argument('--use_forward_albedo',
                             action='store_true',
                             help='Use the ground truth albedo.')
@@ -196,23 +199,37 @@ class OptimizationScript(object):
         """
         wavelength = measurements.wavelength
 
+        # Define the grid for reconstruction
+        if self.args.use_forward_grid:
+            dynamic_grid = []
+            for i in range(ground_truth.num_scatterers):
+                dynamic_grid.append(ground_truth.get_extinction()[i].grid)
+            grid = dynamic_grid[0]
+            grid = shdom.Grid(x = grid.x - grid.xmin, y = grid.y - grid.ymin, z = grid.z)
+        else:
+            extinction_grid = albedo_grid = phase_grid = self.cloud_generator.get_grid()
+            grid = extinction_grid
+
+        if self.args.use_forward_cloud_velocity:
+            cloud_velocity = ground_truth.get_velocity()
+            cloud_velocity = cloud_velocity[0]
+        else:
+            cloud_velocity = None
+
         # Find a cloud mask for non-cloudy grid points
         if self.args.use_forward_mask:
             mask_list = ground_truth.get_mask(threshold=0.001)
         else:
-            grid = ground_truth.get_extinction()[4].grid
             dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-            mask, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.8,
-                                time_list = ground_truth.time_list, thresholds=self.args.radiance_threshold)
-            mask_list = [mask]*ground_truth.num_scatterers
-            show_mask=0
+            mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.8,
+                                time_list = ground_truth.time_list, thresholds=self.args.radiance_threshold,
+                                vx_max = 5, vy_max=0, gt_velocity = cloud_velocity)
+            show_mask=1
             if show_mask:
                 a = (mask_list[0].data).astype(int)
-                aa = (mask_list[6].data).astype(int)
-                b = ((ground_truth.get_mask(threshold=0.001)[0].data)).astype(int)
-                print(np.sum(np.abs(a - aa)))
+                b = ((ground_truth.get_mask(threshold=0.001)[0].resample(dynamic_grid[0]).data)).astype(int)
+                print(np.sum(np.abs(a - b)))
                 shdom.cloud_plot(a)
-                shdom.cloud_plot(aa)
                 shdom.cloud_plot(b)
 
         if self.args.use_forward_albedo:
@@ -226,25 +243,29 @@ class OptimizationScript(object):
         else:
             NotImplemented()
         # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
+        extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(dynamic_grid=dynamic_grid),
+                                                    min_bound=1e-3,
+                                                    max_bound=2e2)
 
-        if self.args.use_forward_grid:
-            extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(),
-                                                 min_bound=1e-3,
-                                                 max_bound=2e2)
-        else:
-            if self.args.use_forward_mask:
-                grid = ground_truth.get_extinction()[4].grid
-                dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-                _, dynamic_grid, _ = dynamic_carver.carve(grid, agreement=0.8,
-                                                          time_list=ground_truth.time_list,
-                                                          thresholds=self.args.radiance_threshold)
-            else:
-                dynamic_extinction = []
-                for grid, ext in zip(dynamic_grid,ground_truth.get_extinction()):
-                    dynamic_extinction.append(shdom.GridData(grid.grid,ext.data))
-                extinction = shdom.DynamicGridDataEstimator(dynamic_extinction,
-                                                 min_bound=1e-3,
-                                                 max_bound=2e2)
+        # if self.args.use_forward_grid:
+        #     extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(),
+        #                                          min_bound=1e-3,
+        #                                          max_bound=2e2)
+        # else:
+        #     if self.args.use_forward_mask:
+        #         grid = ground_truth.get_extinction()[0].grid
+        #         grid = shdom.Grid(x=grid.x - grid.xmin, y=grid.y - grid.ymin, z=grid.z)
+        #         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
+        #         _, dynamic_grid, _ = dynamic_carver.carve(grid, agreement=0.8,
+        #                                                   time_list=ground_truth.time_list,
+        #                                                   thresholds=self.args.radiance_threshold)
+        #     else:
+        #         dynamic_extinction = []
+        #         for grid, ext in zip(dynamic_grid,ground_truth.get_extinction()):
+        #             dynamic_extinction.append(shdom.GridData(grid.grid,ext.data))
+        #         extinction = shdom.DynamicGridDataEstimator(dynamic_extinction,
+        #                                          min_bound=1e-3,
+        #                                          max_bound=2e2)
 
         cloud_estimator = shdom.DynamicOpticalScattererEstimator(wavelength, extinction, albedo, phase)
         cloud_estimator.set_mask(mask_list)
@@ -337,12 +358,12 @@ class OptimizationScript(object):
         ground_truth, dynamic_solver, measurements = self.load_forward_model(self.args.input_dir)
 
         #dynamic_solver load and save problem
-        scene_params = shdom.SceneParameters(
-            wavelength=measurements.wavelength,
-            source=shdom.SolarSource(azimuth=65, zenith=135)
-        )
-        numerical_params = shdom.NumericalParameters(num_mu_bins=8,num_phi_bins=16)
-        dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params,numerical_params=numerical_params)
+        # scene_params = shdom.SceneParameters(
+        #     wavelength=measurements.wavelength,
+        #     source=shdom.SolarSource(azimuth=65, zenith=135)
+        # )
+        # numerical_params = shdom.NumericalParameters(num_mu_bins=8,num_phi_bins=16)
+        # dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params,numerical_params=numerical_params)
 
         # Add noise (currently only supports AirMSPI noise model)
         if self.args.add_noise:

@@ -5,7 +5,7 @@ Dynamic_cloud related objects used for time dependant cloud changing.
 
 import warnings
 from collections import OrderedDict
-from scipy.interpolate import interp1d
+import scipy.ndimage as sci
 import numpy as np
 import time, os, copy, shutil
 from scipy.optimize import minimize
@@ -13,6 +13,7 @@ import shdom
 import dill as pickle
 import tensorboardX as tb
 import matplotlib.pyplot as plt
+
 
 
 
@@ -666,9 +667,28 @@ class DynamicMediumEstimator(object):
         grad[:, 1:] += 2*(dynamic_estimated_extinction[:,1:] - dynamic_estimated_extinction[:,:-1])
         grad = np.reshape(grad,(-1,), order='F')
         return grad
-    # def scatterer_velocity_estimate(self):
 
-
+    def scatterer_velocity_estimate(self):
+        estimated_extinction_stack = []
+        for scatterer_estimator in self._dynamic_medium_estimator:
+            estimated_extinction_stack.append(scatterer_estimator)
+        # dynamic_estimated_extinction = np.stack(estimated_extinction_stack, axis=3)
+        min_err = np.inf
+        for vx in range(-5,6):
+            for vy in range(-5, 6):
+                shifted_extinction = []
+                for extinction, time in zip(estimated_extinction_stack,time_list):
+                    shift = 1e-3 * time * np.array([vx, vy, 0])  # km
+                    shifted_extinction.append(sci.shift(extinction,-shift, mode='nearest'))
+                # shifted_extinction = np.stack(shifted_extinction, axis=3)
+                err = 0
+                for extinction_i in  shifted_extinction:
+                    for extinction_j in shifted_extinction:
+                        err += np.linalg.norm(extinction_i-extinction_j,ord=1)
+                if err < min_err:
+                    min_err = err
+                    velocity = [vx, vy, 0]
+        return velocity
 
     def compute_direct_derivative(self, dynamic_solver):
         for ind, medium_estimator in enumerate(self._dynamic_medium_estimator):
@@ -824,6 +844,7 @@ class DynamicLocalOptimizer(object):
         )
         self._loss = loss
         self._images = images
+        estimated_velocity = self._medium.scatterer_velocity_estimate()
         return loss, gradient
 
     def callback(self, state):

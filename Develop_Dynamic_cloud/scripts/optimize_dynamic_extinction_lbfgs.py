@@ -214,6 +214,7 @@ class OptimizationScript(object):
         if self.args.use_forward_cloud_velocity:
             cloud_velocity = ground_truth.get_velocity()
             cloud_velocity = cloud_velocity[0]
+            cloud_velocity[1] = -6
         else:
             cloud_velocity = None
 
@@ -223,12 +224,12 @@ class OptimizationScript(object):
         else:
             dynamic_carver = shdom.DynamicSpaceCarver(measurements)
             mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.9,
-                                time_list = ground_truth.time_list, thresholds=self.args.radiance_threshold,
+                                time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
                                 vx_max = 5, vy_max=0, gt_velocity = cloud_velocity)
             show_mask=1
             if show_mask:
                 a = (mask_list[0].data).astype(int)
-                b = ((ground_truth.get_mask(threshold=0.001)[4].resample(dynamic_grid[4]).data)).astype(int)
+                b = ((ground_truth.get_mask(threshold=0.001)[0].resample(dynamic_grid[0]).data)).astype(int)
                 print(np.sum((a > b)))
                 print(np.sum((a < b)))
                 shdom.cloud_plot(a)
@@ -269,12 +270,12 @@ class OptimizationScript(object):
         #                                          min_bound=1e-3,
         #                                          max_bound=2e2)
 
-        cloud_estimator = shdom.DynamicOpticalScattererEstimator(wavelength, extinction, albedo, phase)
+        cloud_estimator = shdom.DynamicScattererEstimator(wavelength, extinction, albedo, phase,time_list=measurements.time_list)
         cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)
         air = self.air_generator.get_scatterer(wavelength)
-        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air)
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air,cloud_velocity)
 
         return medium_estimator
 
@@ -302,6 +303,7 @@ class OptimizationScript(object):
             writer.monitor_loss()
             writer.monitor_shdom_iterations()
             writer.monitor_images(measurements=measurements, ckpt_period=5 * 60)
+            writer.monitor_time_smoothness()
 
             # Compare estimator to ground-truth
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)

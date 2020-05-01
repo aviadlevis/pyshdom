@@ -204,7 +204,7 @@ class GridPhase(object):
             A GridPhase resampled onto the input grid
         """
         if self.grid == grid:
-            grid_phase =  self
+            grid_phase = self
         else:
             index = self.index.resample(grid, method='nearest')
             index._data = index.data.clip(1)

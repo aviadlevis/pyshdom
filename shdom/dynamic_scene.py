@@ -78,7 +78,7 @@ def load_dynamic_forward_model(directory):
         medium = None
 
     # Load shdom.Measurements object (sensor geometry and radiances)
-    measurements = shdom.Measurements()
+    measurements = DynamicMeasurements()
     measurements_path = os.path.join(directory, 'measurements')
     assert os.path.exists(measurements_path), 'No measurements file in directory: {}'.format(directory)
     measurements.load(path=measurements_path)
@@ -96,18 +96,32 @@ class TemporaryScatterer(object):
     # TODO
     def __init__(self, scatterer, time=0.0):
         assert isinstance(scatterer,shdom.Scatterer) #check if time is a number
-        self._scatterer = scatterer
+        super().__init__()
         self._time = float(time)
+        self._scatterer = scatterer
         if isinstance(scatterer,shdom.OpticalScatterer):
+            # super().__init__(wavelength=scatterer.wavelength, extinction=scatterer.extinction, albedo=scatterer.albedo, phase=scatterer.phase)
             self._type = 'OpticalScatterer'
         elif isinstance(scatterer,shdom.MicrophysicalScatterer):
+            # super().__init__(lwc=scatterer.lwc, reff=scatterer.reff, veff=scatterer.veff)
+            # if scatterer.num_wavelengths > 0:
+            #     self.add_mie(scatterer.mie[scatterer.wavelength])
             self._type = 'MicrophysicalScatterer'
         else:
             assert 'Unknown Scatterer type'
 
     def get_scatterer(self):
         return self._scatterer
-
+        # if self._type == 'OpticalScatterer':
+        #     return shdom.OpticalScatterer(wavelength=self._wavelength, extinction=self._extinction, albedo=self._albedo, phase=self._phase)
+        # elif self._type == 'MicrophysicalScatterer':
+        #     scatterer = shdom.MicrophysicalScatterer(lwc=self._lwc, reff=self._reff, veff=self._veff)
+        #     if self.num_wavelengths > 0:
+        #         scatterer.add_mie(self._mie[self._wavelength])
+        #     return scatterer
+        # else:
+        #     assert 'Unknown Scatterer type'
+        #     return None
     @property
     def scatterer(self):
         return self._scatterer
@@ -202,7 +216,7 @@ class DynamicScatterer(object):
         assert scatterer_velocity_list.shape[0] == 3 and \
                (scatterer_velocity_list.shape[1] == time_list.shape[0] or scatterer_velocity_list.shape[1] == 1),\
             'time_list, scatterer_velocity_list have wrong dimensions'
-        scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T#km
+        scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T #km
         assert isinstance(scatterer, shdom.Scatterer), 'scatterer is not a Scatterer object'
         self._num_scatterers = 0
         self._wavelength = scatterer.wavelength
@@ -212,7 +226,7 @@ class DynamicScatterer(object):
 
         for scatterer_shift, time in zip(scatterer_shifts, time_list):
             if isinstance(scatterer,shdom.MicrophysicalScatterer):
-                microphysical_scatterer = shdom.MicrophysicalScatterer()
+                shifted_scatterer = shdom.MicrophysicalScatterer()
                 assert scatterer.grid.type == '3D', 'Scatterer grid type has to be 3D'
                 grid_lwc = shdom.Grid(x=scatterer.grid.x+scatterer_shift[0], y=scatterer.grid.y+scatterer_shift[1],
                                       z=scatterer.grid.z+scatterer_shift[2])
@@ -224,20 +238,32 @@ class DynamicScatterer(object):
                     grid_veff = grid_lwc
                 else:
                     grid_veff = scatterer.veff.grid
-                microphysical_scatterer.set_microphysics(
+                shifted_scatterer.set_microphysics(
                     lwc=shdom.GridData(grid_lwc, scatterer.lwc.data).squeeze_dims(),
                     reff=shdom.GridData(grid_reff, scatterer.reff.data).squeeze_dims(),
                     veff=shdom.GridData(grid_veff, scatterer.veff.data).squeeze_dims()
                 )
-                microphysical_scatterer.add_mie(scatterer.mie[scatterer.wavelength])
-                temporary_scatterer = TemporaryScatterer(microphysical_scatterer,time)
+                shifted_scatterer.add_mie(scatterer.mie[scatterer.wavelength])
                 self._type = 'MicrophysicalScatterer'
             elif isinstance(scatterer,shdom.OpticalScatterer()):
-                NotImplemented()
-                #TODO
-                return
+                grid_extinction = shdom.Grid(x=scatterer.grid.x + scatterer_shift[0], y=scatterer.grid.y +
+                                                    scatterer_shift[1], z=scatterer.grid.z + scatterer_shift[2])
+                if scatterer.albedo.type == '3D':
+                    grid_albedo= grid_extinction
+                else:
+                    grid_albedo = scatterer.albedo.grid
+                if scatterer.phase.type == '3D':
+                    grid_phase = grid_extinction
+                else:
+                    grid_phase = scatterer.phase.grid
+                shifted_scatterer = shdom.OpticalScatterer(wavelength=scatterer.wavelength,
+                                    extinction=shdom.GridData(grid_extinction, scatterer.extinction.data).squeeze_dims(),
+                                    albedo=shdom.GridData(grid_albedo, scatterer.albedo.data).squeeze_dims(),
+                                    phase=shdom.GridPhase(scatterer.phase.legendre_table,grid_phase)
+                                   )
             else:
                 assert 'Scatterer type is not supported'
+            temporary_scatterer = TemporaryScatterer(shifted_scatterer, time)
 
             self._temporary_scatterer_list.append(temporary_scatterer)
             self._num_scatterers += 1
@@ -578,6 +604,18 @@ class DynamicCamera(shdom.Camera):
             images.append(self.sensor.render(rte_solver, projection, n_jobs, verbose))
         return images
 
+class DynamicMeasurements(shdom.Measurements):
+    def __init__(self, camera=None, images=None, pixels=None, wavelength=None, uncertainties=None, time_list=None):
+        super().__init__(camera=camera, images=images, pixels=pixels, wavelength=wavelength, uncertainties=uncertainties)
+        assert (images is None) == (time_list is None),'images and time_list have to be None or not'
+        if images is not None and  time_list is not None:
+            assert len(images) == len(time_list), 'images and time_list have to be with the same length'
+        self._time_list = time_list
+
+    @property
+    def time_list(self):
+        return self._time_list
+
 
 class DynamicGridDataEstimator(object):
     def __init__(self, grid_data_list,min_bound,max_bound):
@@ -596,39 +634,122 @@ class DynamicGridDataEstimator(object):
     def dynamic_grid_data(self):
         return self._dynamic_grid_data
 
+class TemporaryScattererEstimator(shdom.ScattererEstimator,TemporaryScatterer):
 
-class DynamicOpticalScattererEstimator(object):
-    #TODO convert to general scatterer DynamicScattererEstimator
-    def __init__(self, wavelength, dynamic_extinction, dynamic_albedo, dynamic_phase):
-        assert isinstance(dynamic_extinction,DynamicGridDataEstimator), 'extinction type has to be DynamicGridDataEstimator'
-        self._dynamic_optical_scatterer = []
-        for extinction, albedo, phase in zip(dynamic_extinction.get_dynamic_grid_data(), dynamic_albedo, dynamic_phase):
-            self._dynamic_optical_scatterer.append(shdom.OpticalScattererEstimator(wavelength, extinction, albedo, phase))
+    def __init__(self, scatterer, time=0.0):
+        TemporaryScatterer.__init__(self,scatterer,time)
+        shdom.ScattererEstimator.__init__(self)
+
+class DynamicScattererEstimator(object):
+    def __init__(self, wavelength, dynamic_extinction, dynamic_albedo, dynamic_phase, time_list):
+        self._num_scatterers = 0
+        self._wavelength = []
+        self._time_list = []
+        self._type = None
+        assert isinstance(dynamic_extinction,DynamicGridDataEstimator),\
+            'extinction type has to be DynamicGridDataEstimator'
+        assert len(dynamic_extinction.dynamic_grid_data)==len(dynamic_albedo)==len(dynamic_phase)==len(time_list),\
+            'All must have the same length'
+        self._temporary_scatterer_estimator_list = []
+        for extinction, albedo, phase, time in \
+                zip(dynamic_extinction.get_dynamic_grid_data(), dynamic_albedo, dynamic_phase, time_list):
+            scatterer_estimator = shdom.OpticalScattererEstimator(wavelength, extinction, albedo, phase)
+            self._temporary_scatterer_estimator_list.append(TemporaryScattererEstimator(scatterer_estimator,time))
+            self._time_list.append(time)
+            self._num_scatterers += 1
+
+    def get_velocity(self):
+        assert self._temporary_scatterer_estimator_list is not None and self._num_scatterers > 1, \
+            'Dynamic Scatterer should have more than 1 scatterer'
+        scatterer_location = []
+        for temporary_scatterer in self._temporary_scatterer_estimator_list:
+            scatterer = temporary_scatterer.get_scatterer()
+            scatterer_location.append([scatterer.grid.x[0], scatterer.grid.y[0], scatterer.grid.z[0]])
+        scatterer_location = np.asarray(scatterer_location)
+        time_list = np.asarray(self._time_list).reshape((-1, 1))
+        scatterer_velocity_list = (scatterer_location[1:, :] - scatterer_location[:-1, :]) / (
+                    time_list[1:] - time_list[:-1])
+        return scatterer_velocity_list
+
+        self._wavelength = wavelength
+        self._type = 'OpticalScattererEstimator'
+
 
     def set_mask(self, mask_list):
-        for optical_scatterer, mask in zip(self._dynamic_optical_scatterer, mask_list):
-            optical_scatterer.set_mask(mask)
+        for scatterer_estimator, mask in zip(self._temporary_scatterer_estimator_list, mask_list):
+            scatterer_estimator.scatterer.set_mask(mask)
 
     def get_dynamic_optical_scatterer(self):
-        return self._dynamic_optical_scatterer
+        return self._temporary_scatterer_estimator_list
 
     @property
-    def dynamic_optical_scatterer(self):
-        return self._dynamic_optical_scatterer
+    def temporary_scatterer_estimator_list(self):
+        return self._temporary_scatterer_estimator_list
+
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def num_scatterers(self):
+        return self._num_scatterers
+
+    @property
+    def wavelength(self):
+        return self._wavelength
+
+    @property
+    def time_list(self):
+        return self._time_list
+
 
 
 class DynamicMediumEstimator(object):
 
-    def __init__(self, dynamic_scatterer=None, air=None):
+    def __init__(self, dynamic_scatterer_estimator=None, air=None,scatterer_velocity=[0,0,0]):
+        self._num_mediums = 0
+        self._wavelength = []
+        self._dynamic_medium = []
+        self._time_list = []
+        self._dynamic_scatterer = None
+        self._scatterer_velocity = scatterer_velocity
+        if dynamic_scatterer_estimator is not None and air is not None:
+            self.set_dynamic_medium_estimator(dynamic_scatterer_estimator,air)
+
+    def set_dynamic_medium_estimator(self, dynamic_scatterer_estimator, air):
+        assert isinstance(dynamic_scatterer_estimator,DynamicScattererEstimator) and isinstance(air,shdom.Scatterer)
+        self._num_mediums = 0
         self._dynamic_medium_estimator = []
-        if dynamic_scatterer is not None and air is not None:
-            for scatterer in dynamic_scatterer.get_dynamic_optical_scatterer():
-                medium_estimator = shdom.MediumEstimator()
-                medium_estimator.add_scatterer(air, 'air')
-                medium_estimator.add_scatterer(scatterer, 'cloud')
-                medium_estimator.set_grid(scatterer.grid + air.grid)
-                self._dynamic_medium_estimator.append(medium_estimator)
-        self._wavelength = medium_estimator.wavelength
+        self._time_list = []
+        # temporary_scatterer_list = dynamic_scatterer_estimator.get_temporary_scatterer_list()
+        for temporary_scatterer, time in zip(dynamic_scatterer_estimator.temporary_scatterer_estimator_list, dynamic_scatterer_estimator.time_list):
+            scatterer = temporary_scatterer.get_scatterer()
+            first_scatterer = True if self._num_mediums == 0 else False
+            if first_scatterer:
+                self._wavelength = scatterer.wavelength
+            else:
+                assert np.allclose(self.wavelength,
+                                   scatterer.wavelength), ' medium wavelength {} differs from dynamic_scatterers wavelength {}'.format(
+                    self.wavelength, scatterer.wavelength)
+            medium_grid = scatterer.grid + air.grid
+            medium = shdom.MediumEstimator(medium_grid)
+            medium.add_scatterer(scatterer, name='cloud')
+            medium.add_scatterer(air, name='air')
+            self._dynamic_medium_estimator.append(medium)
+            self._num_mediums += 1
+            self._time_list.append(time)
+
+
+    # def __init__(self, dynamic_scatterer=None, air=None):
+    #     self._dynamic_medium_estimator = []
+    #     if dynamic_scatterer is not None and air is not None:
+    #         for scatterer in dynamic_scatterer.get_dynamic_optical_scatterer():
+    #             medium_estimator = shdom.MediumEstimator()
+    #             medium_estimator.add_scatterer(air, 'air')
+    #             medium_estimator.add_scatterer(scatterer, 'cloud')
+    #             medium_estimator.set_grid(scatterer.grid + air.grid)
+    #             self._dynamic_medium_estimator.append(medium_estimator)
+    #     self._wavelength = medium_estimator.wavelength
 
     def get_dynamic_medium(self):
         return self._dynamic_medium_estimator
@@ -670,25 +791,53 @@ class DynamicMediumEstimator(object):
 
     def scatterer_velocity_estimate(self):
         estimated_extinction_stack = []
-        for scatterer_estimator in self._dynamic_medium_estimator:
-            estimated_extinction_stack.append(scatterer_estimator)
+
+        # start_x = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.xmin
+        # stop_x = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.xmax
+        # dx = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dx
+        #
+        # start_y = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.ymin
+        # stop_y = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.ymax
+        # dy = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dy
+        #
+        # z = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.z
+        # grid = shdom.Grid(x=np.arange(start_x,stop_x,dx),y=np.arange(start_y,stop_y,dy), z=z)
+
+        delta_list = []
+        for medium_estimator in self._dynamic_medium_estimator:
+            estimated_extinction_stack.append(medium_estimator.estimators['cloud'].extinction)
+            dx = medium_estimator.estimators['cloud'].extinction.grid.dx
+            dy = medium_estimator.estimators['cloud'].extinction.grid.dy
+            # dz = medium_estimator.estimators['cloud'].extinction.grid.dz
+            delta_list.append([dx,dy,1])
+
         # dynamic_estimated_extinction = np.stack(estimated_extinction_stack, axis=3)
         min_err = np.inf
-        for vx in range(-5,6):
-            for vy in range(-5, 6):
+        for dv_x in np.arange(-1,1,0.2):
+            for dv_y in np.arange(-3,3,0.3):
                 shifted_extinction = []
-                for extinction, time in zip(estimated_extinction_stack,time_list):
-                    shift = 1e-3 * time * np.array([vx, vy, 0])  # km
-                    shifted_extinction.append(sci.shift(extinction,-shift, mode='nearest'))
+                for extinction, time, delta in zip(estimated_extinction_stack,self._time_list,delta_list):
+                    shift = 1e-3 * time * np.array([dv_x, dv_y, 0])  # km
+                    # shifted_extinction.append(sci.shift(extinction, -shift, mode='constant',cval=0))
+                    grid = shdom.Grid(x=extinction.grid.x + shift[0], y=extinction.grid.y + shift[1], z=extinction.grid.z + shift[2])
+                    shifted_extinction.append(extinction.resample(grid).data)
                 # shifted_extinction = np.stack(shifted_extinction, axis=3)
                 err = 0
-                for extinction_i in  shifted_extinction:
+                for extinction_i in shifted_extinction:
                     for extinction_j in shifted_extinction:
-                        err += np.linalg.norm(extinction_i-extinction_j,ord=1)
+                        err += np.linalg.norm((extinction_i-extinction_j).reshape(-1,1),ord=1)
                 if err < min_err:
                     min_err = err
-                    velocity = [vx, vy, 0]
-        return velocity
+                    dv = [dv_x, dv_y, 0]
+        self._scatterer_velocity = [x - y for x, y in zip(self._scatterer_velocity, dv)]
+        for medium_estimator, time in zip(self._dynamic_medium_estimator, self._time_list):
+            grid = medium_estimator.estimators['cloud'].extinction.grid
+            grid.x -= 1e-3 *dv[0]*time
+            grid.y -= 1e-3 *dv[1]*time
+            grid = medium_estimator.grid
+            grid.x -= 1e-3 *dv[0]*time
+            grid.y -= 1e-3 *dv[1]*time
+        return dv
 
     def compute_direct_derivative(self, dynamic_solver):
         for ind, medium_estimator in enumerate(self._dynamic_medium_estimator):
@@ -737,12 +886,30 @@ class DynamicMediumEstimator(object):
         return dynamic_scatterer_estimator
 
     @property
+    def scatterer_velocity (self):
+        return self._scatterer_velocity
+
+    @property
+    def num_mediums(self):
+        return self._num_mediums
+
+    @property
+    def time_list(self):
+        return self._time_list
+
+    @property
     def wavelength(self):
         return self._wavelength
 
     @property
     def dynamic_medium_estimator(self):
         return self._dynamic_medium_estimator
+
+
+    # @dynamic_medium_estimator.setter
+    # def dynamic_medium_estimator(self, val):
+    #     assert isinstance(val, list), 'dynamic_medium is not list'
+    #     self._dynamic_medium_estimator = val
 
 
 class DynamicLocalOptimizer(object):
@@ -844,7 +1011,7 @@ class DynamicLocalOptimizer(object):
         )
         self._loss = loss
         self._images = images
-        estimated_velocity = self._medium.scatterer_velocity_estimate()
+        # estimated_velocity = self._medium.scatterer_velocity_estimate()
         return loss, gradient
 
     def callback(self, state):
@@ -1094,6 +1261,22 @@ class DynamicSummaryWriter(object):
         }
         self.add_callback_fn(self.loss_cbfn, kwargs)
 
+    def monitor_time_smoothness(self, ckpt_period=-1):
+        """
+        Monitor the time smoothness.
+
+        Parameters
+        ----------
+        ckpt_period: float
+           time [seconds] between updates. setting ckpt_period=-1 will log at every iteration.
+        """
+        kwargs = {
+            'ckpt_period': ckpt_period,
+            'ckpt_time': time.time(),
+            'title': 'time_smoothness'
+        }
+        self.add_callback_fn(self.loss_cbfn, kwargs)
+
     def save_checkpoints(self, ckpt_period=-1):
         """
         Save a checkpoint of the Optimizer
@@ -1300,6 +1483,26 @@ class DynamicSummaryWriter(object):
         """
         self.tf_writer.add_scalar(kwargs['title'], self.optimizer.loss, self.optimizer.iteration)
 
+    def time_smoothness_cbfn(self, kwargs):
+        """
+        Callback function that is called (every optimizer iteration) for loss monitoring.
+
+        Parameters
+        ----------
+        kwargs: dict,
+            keyword arguments
+        """
+        extinctions=[]
+        for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
+            est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
+            for estimator_temporary_scatterer in est_scatterer.get_temporary_scatterer_list():
+                extinctions.append(estimator_temporary_scatterer.extinction.data)
+        err=0
+        for extinction_i in extinctions:
+            for extinction_j in extinctions:
+                err += np.linalg.norm((extinction_i - extinction_j).reshape(-1, 1), ord=1)
+        self.tf_writer.add_scalar(kwargs['title'], err, self.optimizer.iteration)
+
     def state_cbfn(self, kwargs=None):
         """
         Callback function that is called for state monitoring.
@@ -1360,6 +1563,7 @@ class DynamicSummaryWriter(object):
                                           self.optimizer.iteration)
                 self.tf_writer.add_scalar(kwargs['title'][1].format(dynamic_scatterer_name, gt_temporary_scatterer.time), epsilon,
                                           self.optimizer.iteration)
+
 
     def domain_mean_cbfn(self, kwargs):
         """

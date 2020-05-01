@@ -353,7 +353,7 @@ class RenderScript(object):
             NotImplemented()
         return atmosphere
 
-    def render(self,projections, dynamic_solver):
+    def render(self,projections, dynamic_solver,time_list):
         """
         Define a sensor and render an orthographic image at the top domain.
 
@@ -372,7 +372,7 @@ class RenderScript(object):
 
         dynamic_camera = shdom.DynamicCamera(self.sensor, projections)
         images = dynamic_camera.render(dynamic_solver, self.args.n_jobs)
-        measurements = shdom.Measurements(dynamic_camera, images=images, wavelength=dynamic_solver.wavelength)
+        measurements = shdom.DynamicMeasurements(dynamic_camera, images=images, wavelength=dynamic_solver.wavelength,time_list=time_list)
         return measurements
 
     def main(self):
@@ -389,7 +389,7 @@ class RenderScript(object):
 
         rte_solvers = self.get_solver(dynamic_medium)
         projections = self.get_projections(camera_position_list, look_at_point)
-        measurements = self.render(projections, rte_solvers)
+        measurements = self.render(projections, rte_solvers,time_list)
 
         # Save measurements, medium and solver parameters
         shdom.save_dynamic_forward_model(self.args.output_dir, dynamic_medium, rte_solvers, measurements)

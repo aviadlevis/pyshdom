@@ -1275,7 +1275,7 @@ class DynamicSummaryWriter(object):
             'ckpt_time': time.time(),
             'title': 'time_smoothness'
         }
-        self.add_callback_fn(self.loss_cbfn, kwargs)
+        self.add_callback_fn(self.time_smoothness_cbfn, kwargs)
 
     def save_checkpoints(self, ckpt_period=-1):
         """
@@ -1794,12 +1794,12 @@ class DynamicSpaceCarver(object):
                 thresholds.size, len(self._images))
         best_match = -np.inf
 
-        if not gt_velocity:
+        if gt_velocity is None:
             vx_vec = np.linspace(-vx_max, vx_max, num=20)
             vy_vec = np.linspace(-vy_max, vy_max, num=20)
         else:
-            vx_vec = gt_velocity[0]
-            vy_vec = gt_velocity[1]
+            vx_vec = [gt_velocity[0]]
+            vy_vec = [gt_velocity[1]]
         for vx in vx_vec:
             for vy in vy_vec:
                 dynamic_grid = []

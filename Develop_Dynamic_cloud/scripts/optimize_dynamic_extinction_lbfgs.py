@@ -213,7 +213,7 @@ class OptimizationScript(object):
 
         if self.args.use_forward_cloud_velocity:
             cloud_velocity = ground_truth.get_velocity()
-            cloud_velocity = cloud_velocity[0]
+            cloud_velocity = cloud_velocity[0]*1000 #km/sec to m/sec
             cloud_velocity[1] = -6
         else:
             cloud_velocity = None

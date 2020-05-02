@@ -102,6 +102,9 @@ class ReadReasultsScript(object):
         parser: argparse.ArgumentParser()
             parser initialized with basic arguments that are common to most rendering scripts.
         """
+        parser.add_argument('--use_forward_cloud_velocity',
+                            action='store_true',
+                            help='Use the ground truth cloud velocity.')
         parser.add_argument('--use_forward_albedo',
                             action='store_true',
                             help='Use the ground truth albedo.')
@@ -109,7 +112,7 @@ class ReadReasultsScript(object):
                             action='store_true',
                             help='Use the ground-truth phase reconstruction.')
         parser.add_argument('--radiance_threshold',
-                            default=[0.05],
+                            default=[0.02],
                             nargs='+',
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
@@ -120,6 +123,7 @@ class ReadReasultsScript(object):
                                  '<wavelength> will be replaced by the corresponding wavelength.')
 
         return parser
+
 
     def parse_arguments(self):
         """
@@ -190,22 +194,18 @@ class ReadReasultsScript(object):
         # else:
         #     NotImplemented()
 
-        if self.args.use_forward_albedo:
-            albedo = ground_truth.get_albedo()
-        else:
-            # albedo = self.cloud_generator.get_albedo(wavelength, albedo_grid)
-            NotImplemented()
 
-        if self.args.use_forward_phase:
-            phase = ground_truth.get_phase()
-        else:
-            NotImplemented()
+        albedo = ground_truth.get_albedo()
+
+
+        phase = ground_truth.get_phase()
+
         # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
 
         extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(),
                                              min_bound=1e-3,
                                              max_bound=2e2)
-        cloud_estimator = shdom.DynamicOpticalScattererEstimator(wavelength, extinction, albedo, phase)
+        cloud_estimator = shdom.DynamicScattererEstimator(wavelength, extinction, albedo, phase,measurements.time_list)
         cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)
@@ -275,50 +275,90 @@ class ReadReasultsScript(object):
         return ground_truth, dynamic_solver, measurements
 
     def get_results(self):
+        """
+        """
         self.parse_arguments()
-
         ground_truth, dynamic_solver, measurements = self.load_forward_model(self.args.input_dir)
+        wavelength = measurements.wavelength
 
-        #dynamic_solver load and save problem
-        scene_params = shdom.SceneParameters(
-            wavelength=measurements.wavelength,
-            source=shdom.SolarSource(azimuth=65, zenith=135)
-        )
-        numerical_params = shdom.NumericalParameters()
-        dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params,numerical_params=numerical_params)
-
-        # Add noise (currently only supports AirMSPI noise model)
-        if self.args.add_noise:
-            measurements.set_noise(shdom.AirMSPINoise())
-
-        # Initialize a Medium Estimator
-        medium_estimator = self.get_medium_estimator(measurements, ground_truth)
-
-        # Initialize TensorboardX logger
-        writer = self.get_summary_writer(measurements, ground_truth)
-
-        # Initialize a LocalOptimizer
-        options = {
-            'maxiter': self.args.maxiter,
-            'maxls': self.args.maxls,
-            'disp': self.args.disp,
-            'gtol': self.args.gtol,
-            'ftol': self.args.ftol
-        }
-        optimizer = shdom.DynamicLocalOptimizer('L-BFGS-B', options=options, n_jobs=self.args.n_jobs)
-        optimizer.set_measurements(measurements)
-        optimizer.set_dynamic_solver(dynamic_solver)
-        optimizer.set_medium_estimator(medium_estimator)
-        optimizer.set_writer(writer)
-
-        # Reload previous state
-        if self.args.load_path is not None:
-            optimizer.load_results(self.args.load_path)
+        # Define the grid for reconstruction
+        if self.args.use_forward_grid:
+            dynamic_grid = []
+            for i in range(ground_truth.num_scatterers):
+                dynamic_grid.append(ground_truth.get_extinction()[i].grid)
+            grid = dynamic_grid[0]
+            grid = shdom.Grid(x = grid.x - grid.xmin, y = grid.y - grid.ymin, z = grid.z)
         else:
+            extinction_grid = albedo_grid = phase_grid = self.cloud_generator.get_grid()
+            grid = extinction_grid
+
+        if self.args.use_forward_cloud_velocity:
+            cloud_velocity = ground_truth.get_velocity()
+            cloud_velocity = cloud_velocity[0]*1000
+            cloud_velocity[1] = -6
+        else:
+            cloud_velocity = None
+
+        # Find a cloud mask for non-cloudy grid points
+        if self.args.use_forward_mask:
+            mask_list = ground_truth.get_mask(threshold=0.001)
+        else:
+            dynamic_carver = shdom.DynamicSpaceCarver(measurements)
+            mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.8,
+                                time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
+                                vx_max = 5, vy_max=0, gt_velocity = cloud_velocity)
+            show_mask=1
+            if show_mask:
+                a = (mask_list[0].data).astype(int)
+                b = ((ground_truth.get_mask(threshold=0.001)[4].resample(dynamic_grid[4]).data)).astype(int)
+                print(np.sum((a > b)))
+                print(np.sum((a < b)))
+                shdom.cloud_plot(a)
+                shdom.cloud_plot(b)
+
+        if self.args.use_forward_albedo:
+            albedo = ground_truth.get_albedo()
+        else:
+            # albedo = self.cloud_generator.get_albedo(wavelength, albedo_grid)
             NotImplemented()
 
-        estimated_dynamic_medium = optimizer.medium.dynamic_medium_estimator
-        return ground_truth, estimated_dynamic_medium
+        if self.args.use_forward_phase:
+            phase = ground_truth.get_phase()
+        else:
+            NotImplemented()
+        # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
+        extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(dynamic_grid=dynamic_grid),
+                                                    min_bound=1e-3,
+                                                    max_bound=2e2)
+
+        # if self.args.use_forward_grid:
+        #     extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(),
+        #                                          min_bound=1e-3,
+        #                                          max_bound=2e2)
+        # else:
+        #     if self.args.use_forward_mask:
+        #         grid = ground_truth.get_extinction()[0].grid
+        #         grid = shdom.Grid(x=grid.x - grid.xmin, y=grid.y - grid.ymin, z=grid.z)
+        #         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
+        #         _, dynamic_grid, _ = dynamic_carver.carve(grid, agreement=0.8,
+        #                                                   time_list=ground_truth.time_list,
+        #                                                   thresholds=self.args.radiance_threshold)
+        #     else:
+        #         dynamic_extinction = []
+        #         for grid, ext in zip(dynamic_grid,ground_truth.get_extinction()):
+        #             dynamic_extinction.append(shdom.GridData(grid.grid,ext.data))
+        #         extinction = shdom.DynamicGridDataEstimator(dynamic_extinction,
+        #                                          min_bound=1e-3,
+        #                                          max_bound=2e2)
+
+        cloud_estimator = shdom.DynamicScattererEstimator(wavelength, extinction, albedo, phase,time_list=measurements.time_list)
+        cloud_estimator.set_mask(mask_list)
+
+        # Create a medium estimator object (optional Rayleigh scattering)
+        air = self.air_generator.get_scatterer(wavelength)
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air,cloud_velocity)
+
+        return medium_estimator
 
     def extinction_compare(self,ground_truth, estimated_dynamic_medium):
         gt_extinction_stack = []

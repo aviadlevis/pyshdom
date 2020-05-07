@@ -243,7 +243,7 @@ class ReadReasultsScript(object):
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)
             writer.monitor_domain_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth)
             writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.4)
-            writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=1.0))
+            writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=0.0001))
 
         return writer
 

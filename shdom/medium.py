@@ -479,12 +479,20 @@ class MicrophysicalScatterer(Scatterer):
         if val is not None and self.mie: 
             max_val = val.max_value
             min_val = val.data[val.data>0.0].min()
-            assert  max_val < self.max_reff+1e-3, \
-                    'Maximum medium effective radius [{:2.2f}] is larger than the pre-computed table maximum radius [{:2.2f}]. ' \
-                    'Recompute Mie table with larger maximum radius.'.format(max_val, self.max_reff)
-            assert  min_val > self.min_reff-1e-3, \
-                    'Minimum medium effective radius [{:2.2f}] is smaller than the pre-computed table minimum radius [{:2.2f}]. ' \
-                    'Recompute Mie table with smaller minimum radius.'.format(min_val, self.min_reff)            
+            if max_val >= self.max_reff+1e-3:
+                print('Maximum medium effective radius [{:2.2f}] is larger than the pre-computed table maximum radius [{:2.2f}]. ' \
+                    'Recompute Mie table with larger maximum radius. Setting exceptioned values to pre-computed maximal value'.format(max_val, self.max_reff))
+                val.data[val.data >= self.max_reff+1e-3] = self.max_reff
+            if min_val <= self.min_reff-1e-3:
+                print('Minimum medium effective radius [{:2.2f}] is smaller than the pre-computed table minimum radius [{:2.2f}]. ' \
+                    'Recompute Mie table with smaller minimum radius. Setting exceptioned values to pre-computed minimal value'.format(min_val, self.min_reff))
+                val.data[(val.data <= self.min_reff - 1e-3) & (val.data>0.0)] = self.min_reff
+            # assert  max_val < self.max_reff+1e-3, \
+            #         'Maximum medium effective radius [{:2.2f}] is larger than the pre-computed table maximum radius [{:2.2f}]. ' \
+            #         'Recompute Mie table with larger maximum radius.'.format(max_val, self.max_reff)
+            # assert  min_val > self.min_reff-1e-3, \
+            #         'Minimum medium effective radius [{:2.2f}] is smaller than the pre-computed table minimum radius [{:2.2f}]. ' \
+            #         'Recompute Mie table with smaller minimum radius.'.format(min_val, self.min_reff)
         self._reff = val
      
     @property
@@ -495,13 +503,21 @@ class MicrophysicalScatterer(Scatterer):
     def veff(self, val):
         if val is not None and self.mie: 
             max_val = val.max_value
-            min_val = val.data[val.data>0.0].min()            
-            assert  max_val < self.max_veff+1e-3, \
-                    'Maximum medium effective radius [{:2.2f}] is larger than the pre-computed table maximum variance [{:2.2f}]. ' \
-                    'Recompute Mie table with larger maximum radius.'.format(max_val, self.max_veff)
-            assert  min_val > self.min_veff-1e-3, \
-                    'Minimum medium effective radius [{:2.2f}] is smaller than the pre-computed table minimum variance [{:2.2f}]. ' \
-                    'Recompute Mie table with smaller minimum radius.'.format(min_val, self.min_veff)            
+            min_val = val.data[val.data>0.0].min()
+            if max_val >= self.max_veff+1e-3:
+                print('Maximum medium effective variance [{:2.2f}] is larger than the pre-computed table maximum variance [{:2.2f}]. ' \
+                    'Recompute Mie table with larger maximum variance. Setting exceptioned values to pre-computed maximal value'.format(max_val, self.max_veff))
+                val.data[val.data >= self.max_veff+1e-3] = self.max_veff
+            if min_val <= self.min_veff-1e-3:
+                print('Minimum medium effective variance [{:2.2f}] is smaller than the pre-computed table minimum variance [{:2.2f}]. ' \
+                    'Recompute Mie table with smaller minimum variance. Setting exceptioned values to pre-computed minimal value'.format(min_val, self.min_veff))
+                val.data[(val.data <= self.min_veff - 1e-3) & (val.data>0.0)] = self.min_veff
+            # assert  max_val < self.max_veff+1e-3, \
+            #         'Maximum medium effective radius [{:2.2f}] is larger than the pre-computed table maximum variance [{:2.2f}]. ' \
+            #         'Recompute Mie table with larger maximum radius.'.format(max_val, self.max_veff)
+            # assert  min_val > self.min_veff-1e-3, \
+            #         'Minimum medium effective radius [{:2.2f}] is smaller than the pre-computed table minimum variance [{:2.2f}]. ' \
+            #         'Recompute Mie table with smaller minimum radius.'.format(min_val, self.min_veff)
         self._veff = val      
 
     @property

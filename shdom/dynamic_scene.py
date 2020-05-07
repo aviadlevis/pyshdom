@@ -283,11 +283,17 @@ class DynamicScatterer(object):
         mask: shdom.GridData object
             A boolean mask with True for dense voxels and False for optically thin regions.
         """
-        mask_list = []
+        first_mask = True
         for temporal_scatterer in self._temporary_scatterer_list:
             scatterer = temporal_scatterer.get_scatterer()
-            data = scatterer.extinction.data > threshold
-            mask_list.append(shdom.GridData(scatterer.grid, data))
+            mask = scatterer.extinction.data > threshold
+            if first_mask:
+                joint_mask = mask
+                first_mask = False
+            else:
+                joint_mask = joint_mask | mask
+
+        mask_list = [shdom.GridData(scatterer.grid, joint_mask)] * self.num_scatterers
         return mask_list
 
     def get_albedo(self):
@@ -1496,7 +1502,7 @@ class DynamicSummaryWriter(object):
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
             for estimator_temporary_scatterer in est_scatterer.get_temporary_scatterer_list():
-                extinctions.append(estimator_temporary_scatterer.extinction.data)
+                extinctions.append(estimator_temporary_scatterer.scatterer.extinction.data)
         err=0
         for extinction_i in extinctions:
             for extinction_j in extinctions:

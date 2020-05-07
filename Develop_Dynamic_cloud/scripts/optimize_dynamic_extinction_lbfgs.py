@@ -214,13 +214,12 @@ class OptimizationScript(object):
         if self.args.use_forward_cloud_velocity:
             cloud_velocity = ground_truth.get_velocity()
             cloud_velocity = cloud_velocity[0]*1000 #km/sec to m/sec
-            cloud_velocity[1] = -6
         else:
             cloud_velocity = None
 
         # Find a cloud mask for non-cloudy grid points
         if self.args.use_forward_mask:
-            mask_list = ground_truth.get_mask(threshold=0.001)
+            mask_list = ground_truth.get_mask(threshold=0.000001)
         else:
             dynamic_carver = shdom.DynamicSpaceCarver(measurements)
             mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.9,

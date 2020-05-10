@@ -228,7 +228,7 @@ class OptimizationScript(object):
             show_mask=1
             if show_mask:
                 a = (mask_list[0].data).astype(int)
-                b = ((ground_truth.get_mask(threshold=0.001)[0].resample(dynamic_grid[0]).data)).astype(int)
+                b = ((ground_truth.get_mask(threshold=0.000001)[0].resample(dynamic_grid[0]).data)).astype(int)
                 print(np.sum((a > b)))
                 print(np.sum((a < b)))
                 shdom.cloud_plot(a)
@@ -246,28 +246,8 @@ class OptimizationScript(object):
             NotImplemented()
         # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
         extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(dynamic_grid=dynamic_grid),
-                                                    min_bound=1e-3,
+                                                    min_bound=1e-5,
                                                     max_bound=2e2)
-
-        # if self.args.use_forward_grid:
-        #     extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(),
-        #                                          min_bound=1e-3,
-        #                                          max_bound=2e2)
-        # else:
-        #     if self.args.use_forward_mask:
-        #         grid = ground_truth.get_extinction()[0].grid
-        #         grid = shdom.Grid(x=grid.x - grid.xmin, y=grid.y - grid.ymin, z=grid.z)
-        #         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-        #         _, dynamic_grid, _ = dynamic_carver.carve(grid, agreement=0.8,
-        #                                                   time_list=ground_truth.time_list,
-        #                                                   thresholds=self.args.radiance_threshold)
-        #     else:
-        #         dynamic_extinction = []
-        #         for grid, ext in zip(dynamic_grid,ground_truth.get_extinction()):
-        #             dynamic_extinction.append(shdom.GridData(grid.grid,ext.data))
-        #         extinction = shdom.DynamicGridDataEstimator(dynamic_extinction,
-        #                                          min_bound=1e-3,
-        #                                          max_bound=2e2)
 
         cloud_estimator = shdom.DynamicScattererEstimator(wavelength, extinction, albedo, phase,time_list=measurements.time_list)
         cloud_estimator.set_mask(mask_list)
@@ -308,7 +288,7 @@ class OptimizationScript(object):
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)
             writer.monitor_domain_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth)
             writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.4)
-            writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=1.0))
+            writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=0.000001))
 
             # save parse_arguments
             self.save_args(log_dir)

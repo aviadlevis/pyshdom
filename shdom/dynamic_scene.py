@@ -761,30 +761,34 @@ class DynamicMediumEstimator(object):
         return self._dynamic_medium_estimator
 
     def compute_gradient(self,dynamic_solver, measurements, n_jobs=1, regularization_const=0):
-        state_gradient = []
-        loss = 0.0
+        data_gradient = []
+        data_loss = 0.0
         images = []
+        loss =[]
 
         resolutions = measurements.camera.projection.resolution
         split_indices = np.cumsum(measurements.camera.projection.npix[:-1])
-        measurements = measurements.split(split_indices) #len(self.dynamic_scatterer_estimator)
+        measurements = measurements.split(split_indices)
 
         for scatterer_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, dynamic_solver.solver_list, measurements, resolutions):
             grad_output = scatterer_estimator.compute_gradient(shdom.RteSolverArray([rte_solver]),measurement,n_jobs)
-            state_gradient.extend(grad_output[0])
-            loss += (grad_output[1])
+            data_gradient.extend(grad_output[0] / measurement.images.size) #unit less grad
+            data_loss += (grad_output[1] / measurement.images.size) #unit less loss
             image = grad_output[2]
             images.append(image.reshape(resolution, order='F'))
-
+        loss.append(data_loss / len(measurements))
         if regularization_const != 0:
-            regularization_term = regularization_const * self.compute_gradient_regularization()
-            state_gradient = np.asarray(state_gradient) + regularization_term
+            regularization_loss, regularization_grad = self.compute_gradient_regularization(regularization_const)
+            loss.append(regularization_loss)
+            state_gradient = np.asarray(data_gradient) + regularization_grad
         else:
-            state_gradient = np.asarray(state_gradient)
+            state_gradient = np.asarray(data_gradient)
 
-        return state_gradient, loss/len(measurements), images
+        return state_gradient, loss, images
 
-    def compute_gradient_regularization(self, regularization_type='l2'):
+    def compute_gradient_regularization(self,regularization_const, regularization_type='l2'):
+        beta_avg = 1
+
         estimated_extinction_stack = []
         for scatterer_estimator in self._dynamic_medium_estimator:
             estimated_extinction_stack.append(scatterer_estimator.get_state())
@@ -792,8 +796,15 @@ class DynamicMediumEstimator(object):
         grad = np.zeros_like(dynamic_estimated_extinction)
         grad[:,:-1] += 2*(dynamic_estimated_extinction[:,:-1] - dynamic_estimated_extinction[:,1:])
         grad[:, 1:] += 2*(dynamic_estimated_extinction[:,1:] - dynamic_estimated_extinction[:,:-1])
-        grad = np.reshape(grad,(-1,), order='F')
-        return grad
+        grad = np.reshape(grad,(-1,), order='F') / dynamic_estimated_extinction.shape[0] \
+               / (dynamic_estimated_extinction.shape[1]-1) / beta_avg**2
+
+        loss =0
+        loss += np.sum((dynamic_estimated_extinction[:,:-1] - dynamic_estimated_extinction[:,1:])**2)
+        loss += np.sum((dynamic_estimated_extinction[:, 1:] - dynamic_estimated_extinction[:, :-1]) ** 2)
+        loss /= (dynamic_estimated_extinction.shape[0] * (dynamic_estimated_extinction.shape[1]-1) * beta_avg**2)
+
+        return regularization_const * loss, regularization_const * grad #unit less grad
 
     def scatterer_velocity_estimate(self):
         estimated_extinction_stack = []
@@ -912,12 +923,6 @@ class DynamicMediumEstimator(object):
         return self._dynamic_medium_estimator
 
 
-    # @dynamic_medium_estimator.setter
-    # def dynamic_medium_estimator(self, val):
-    #     assert isinstance(val, list), 'dynamic_medium is not list'
-    #     self._dynamic_medium_estimator = val
-
-
 class DynamicLocalOptimizer(object):
     """
    #TODO
@@ -1018,7 +1023,7 @@ class DynamicLocalOptimizer(object):
         self._loss = loss
         self._images = images
         # estimated_velocity = self._medium.scatterer_velocity_estimate()
-        return loss, gradient
+        return sum(loss), gradient
 
     def callback(self, state):
         """
@@ -1263,7 +1268,7 @@ class DynamicSummaryWriter(object):
         kwargs = {
             'ckpt_period': ckpt_period,
             'ckpt_time': time.time(),
-            'title': 'loss'
+            'title': 'loss',
         }
         self.add_callback_fn(self.loss_cbfn, kwargs)
 
@@ -1487,7 +1492,16 @@ class DynamicSummaryWriter(object):
         kwargs: dict,
             keyword arguments
         """
-        self.tf_writer.add_scalar(kwargs['title'], self.optimizer.loss, self.optimizer.iteration)
+        if isinstance(self.optimizer.loss,list):
+            self.tf_writer.add_scalars(kwargs['title'], {
+                kwargs['title']: sum(self.optimizer.loss),
+                'Data term loss': self.optimizer.loss[0],
+                'Regularization term loss': self.optimizer.loss[1],
+            }
+                , self.optimizer.iteration)
+        else:
+            self.tf_writer.add_scalar(kwargs['Data term loss'], self.optimizer.loss, self.optimizer.iteration)
+
 
     def time_smoothness_cbfn(self, kwargs):
         """
@@ -1580,20 +1594,28 @@ class DynamicSummaryWriter(object):
         kwargs: dict,
             keyword arguments
         """
+
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
+            est_param = 0
+            gt_param = 0
+            len_param = 0
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
             for gt_temporary_scatterer, estimator_temporary_scatterer in \
                     zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
                         est_scatterer.get_temporary_scatterer_list()):
-                gt_param = gt_temporary_scatterer.scatterer.extinction
-                est_param = np.mean(estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data)
-                gt_param = np.mean(gt_param.data)
+                gt = gt_temporary_scatterer.scatterer.extinction
+                est_param += np.mean(estimator_temporary_scatterer.scatterer.extinction.resample(gt.grid).data)
+                gt_param += np.mean(gt.data)
+                len_param +=1
 
-                self.tf_writer.add_scalars(
-                    main_tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction'),
-                    tag_scalar_dict={'estimated': est_param, 'true': gt_param},
-                    global_step=self.optimizer.iteration
-                )
+            est_param /= len_param
+            gt_param /= len_param
+
+            self.tf_writer.add_scalars(
+                main_tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction'),
+                tag_scalar_dict={'estimated': est_param, 'true': gt_param},
+                global_step=self.optimizer.iteration
+            )
 
     def horizontal_mean_cbfn(self, kwargs):
         """
@@ -1642,35 +1664,35 @@ class DynamicSummaryWriter(object):
         kwargs: dict,
             keyword arguments
         """
-        # for scatterer_name, gt_scatterer in self._ground_truth.items():
-        #     est_scatterer = self.optimizer.medium.get_scatterer(scatterer_name)
-        #     parameters = est_scatterer.estimators.keys() if kwargs['parameters']=='all' else kwargs['parameters']
-        #     for parameter_name in parameters:
-        #         if parameter_name not in est_scatterer.estimators.keys():
-        #             continue
-        #         parameter = est_scatterer.estimators[parameter_name]
-        #         est_param = parameter.data.ravel()
-        #         ground_truth = getattr(gt_scatterer, parameter_name)
-        #         gt_param = ground_truth.data.ravel()
-        #         rho = np.corrcoef(est_param, gt_param)[1, 0]
-        #         num_params = gt_param.size
-        #         rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
-        #         max_val = max(gt_param.max(), est_param.max())
-        #         fig, ax = plt.subplots()
-        #         ax.set_title(r'{} {}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(scatterer_name, parameter_name, 100 * kwargs['percent'], rho),
-        #                      fontsize=16)
-        #         ax.scatter(gt_param[rand_ind], est_param[rand_ind], facecolors='none', edgecolors='b')
-        #         ax.set_xlim([0, 1.1*max_val])
-        #         ax.set_ylim([0, 1.1*max_val])
-        #         ax.plot(ax.get_xlim(), ax.get_ylim(), c='r', ls='--')
-        #         ax.set_ylabel('Estimated', fontsize=14)
-        #         ax.set_xlabel('True', fontsize=14)
-        #
-        #         self.tf_writer.add_figure(
-        #             tag=kwargs['title'].format(scatterer_name, parameter_name),
-        #             figure=fig,
-        #             global_step=self.optimizer.iteration
-        #         )
+        for scatterer_name, gt_scatterer in self._ground_truth.items():
+            est_scatterer = self.optimizer.medium.get_scatterer(scatterer_name)
+            parameters = est_scatterer.estimators.keys() if kwargs['parameters']=='all' else kwargs['parameters']
+            for parameter_name in parameters:
+                if parameter_name not in est_scatterer.estimators.keys():
+                    continue
+                parameter = est_scatterer.estimators[parameter_name]
+                est_param = parameter.data.ravel()
+                ground_truth = getattr(gt_scatterer, parameter_name)
+                gt_param = ground_truth.data.ravel()
+                rho = np.corrcoef(est_param, gt_param)[1, 0]
+                num_params = gt_param.size
+                rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
+                max_val = max(gt_param.max(), est_param.max())
+                fig, ax = plt.subplots()
+                ax.set_title(r'{} {}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(scatterer_name, parameter_name, 100 * kwargs['percent'], rho),
+                             fontsize=16)
+                ax.scatter(gt_param[rand_ind], est_param[rand_ind], facecolors='none', edgecolors='b')
+                ax.set_xlim([0, 1.1*max_val])
+                ax.set_ylim([0, 1.1*max_val])
+                ax.plot(ax.get_xlim(), ax.get_ylim(), c='r', ls='--')
+                ax.set_ylabel('Estimated', fontsize=14)
+                ax.set_xlabel('True', fontsize=14)
+
+                self.tf_writer.add_figure(
+                    tag=kwargs['title'].format(scatterer_name, parameter_name),
+                    figure=fig,
+                    global_step=self.optimizer.iteration
+                )
 
     def write_image_list(self, global_step, images, titles, vmax=None):
         """

@@ -624,11 +624,11 @@ class DynamicMeasurements(shdom.Measurements):
 
 
 class DynamicGridDataEstimator(object):
-    def __init__(self, grid_data_list,min_bound,max_bound):
+    def __init__(self, grid_data_list,init_val,min_bound,max_bound):
         self._dynamic_grid_data = []
         for grid_data in grid_data_list:
             # init_vals = np.random.normal(loc=0.01, scale=0.001,size=grid_data.data.shape)
-            init_vals = np.ones_like(grid_data.data)*0.1
+            init_vals = np.ones_like(grid_data.data)*init_val
             init_drid_data = shdom.GridData(grid_data.grid,init_vals)
             self._dynamic_grid_data.append(shdom.GridDataEstimator(init_drid_data,min_bound, max_bound))
 
@@ -801,7 +801,6 @@ class DynamicMediumEstimator(object):
 
         loss =0
         loss += np.sum((dynamic_estimated_extinction[:,:-1] - dynamic_estimated_extinction[:,1:])**2)
-        loss += np.sum((dynamic_estimated_extinction[:, 1:] - dynamic_estimated_extinction[:, :-1]) ** 2)
         loss /= (dynamic_estimated_extinction.shape[0] * (dynamic_estimated_extinction.shape[1]-1) * beta_avg**2)
 
         return regularization_const * loss, regularization_const * grad #unit less grad
@@ -1379,7 +1378,7 @@ class DynamicSummaryWriter(object):
         kwargs = {
             'ckpt_period': ckpt_period,
             'ckpt_time': time.time(),
-            'title': '{}/scatter_plot/{}',
+            'title': '{}/scatter_plot/{}{}',
             'percent': dilute_percent,
             'parameters': parameters
         }
@@ -1407,9 +1406,10 @@ class DynamicSummaryWriter(object):
         kwargs = {
             'ckpt_period': ckpt_period,
             'ckpt_time': time.time(),
-            'title': '{}/horizontal_mean/{}',
+            'title': '{}/horizontal_mean/{}{}',
             'mask': ground_truth_mask
         }
+
         self.add_callback_fn(self.horizontal_mean_cbfn, kwargs)
         if hasattr(self, '_ground_truth'):
             self._ground_truth[estimator_name] = ground_truth
@@ -1626,34 +1626,37 @@ class DynamicSummaryWriter(object):
         kwargs: dict,
             keyword arguments
         """
+
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
-            for gt_temporary_scatterer, estimator_temporary_scatterer in \
-                    zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
-                        est_scatterer.get_temporary_scatterer_list()):
-                gt_param = gt_temporary_scatterer.scatterer.extinction
+            for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
+                    enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                        est_scatterer.get_temporary_scatterer_list())):
+                gt_param = (gt_temporary_scatterer.scatterer.extinction)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=RuntimeWarning)
-                    est_param = copy.copy(estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid))
-                    # est_param[est_scatterer.mask.data == False] = np.nan
-                    est_param_mean = np.nan_to_num(np.nanmean(est_param.data, axis=(0, 1)))
+                    est_param_data = copy.copy(estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data)
+                    est_param_data[(estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == False)] = np.nan
+                    est_param_mean = np.nan_to_num(np.nanmean(est_param_data, axis=(0, 1)))
 
                     gt_param_data = copy.copy(gt_param.data)
-                    # if kwargs['mask']:
-                    #     gt_param[kwargs['mask'].data == False] = np.nan
+                    if kwargs['mask']:
+                        gt_param_data[kwargs['mask'][ind].data == False] = np.nan
+                        # gt_param[estimator_temporary_scatterer.scatterer.mask.data == False] = np.nan
                     gt_param_mean = np.nan_to_num(np.nanmean(gt_param_data, axis=(0, 1)))
 
                 fig, ax = plt.subplots()
-                ax.set_title('{} {}'.format(dynamic_scatterer_name, 'extinction'), fontsize=16)
-                ax.plot(est_param_mean, est_param.grid.z, label='Estimated')
+                ax.set_title('{} {} {}'.format(dynamic_scatterer_name, 'extinction', ind), fontsize=16)
+                ax.plot(est_param_mean, estimator_temporary_scatterer.scatterer.extinction.grid.z, label='Estimated')
                 ax.plot(gt_param_mean, gt_param.grid.z, label='True')
                 ax.legend()
                 ax.set_ylabel('Altitude [km]', fontsize=14)
                 self.tf_writer.add_figure(
-                    tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction'),
+                    tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction', ind),
                     figure=fig,
                     global_step=self.optimizer.iteration
                 )
+
 
     def scatter_plot_cbfn(self, kwargs):
         """
@@ -1664,24 +1667,30 @@ class DynamicSummaryWriter(object):
         kwargs: dict,
             keyword arguments
         """
-        for scatterer_name, gt_scatterer in self._ground_truth.items():
-            est_scatterer = self.optimizer.medium.get_scatterer(scatterer_name)
-            parameters = est_scatterer.estimators.keys() if kwargs['parameters']=='all' else kwargs['parameters']
-            for parameter_name in parameters:
-                if parameter_name not in est_scatterer.estimators.keys():
-                    continue
-                parameter = est_scatterer.estimators[parameter_name]
-                est_param = parameter.data.ravel()
-                ground_truth = getattr(gt_scatterer, parameter_name)
-                gt_param = ground_truth.data.ravel()
-                rho = np.corrcoef(est_param, gt_param)[1, 0]
-                num_params = gt_param.size
+        for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
+            est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
+            for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
+                    enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                                  est_scatterer.get_temporary_scatterer_list())):
+
+                gt_param = gt_temporary_scatterer.scatterer.extinction
+
+                est_param_data = copy.copy(estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data)
+                est_param_data = est_param_data[
+                    (estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == True)].ravel()
+
+                gt_param_data = copy.copy(gt_param.data)
+                gt_param_data = gt_param_data[
+                    (estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == True)].ravel()
+
+                rho = np.corrcoef(est_param_data, gt_param_data)[1, 0]
+                num_params = gt_param_data.size
                 rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
-                max_val = max(gt_param.max(), est_param.max())
+                max_val = max(gt_param_data.max(), est_param_data.max())
                 fig, ax = plt.subplots()
-                ax.set_title(r'{} {}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(scatterer_name, parameter_name, 100 * kwargs['percent'], rho),
+                ax.set_title(r'{} {}{}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(dynamic_scatterer_name, 'extinction', ind, 100 * kwargs['percent'], rho),
                              fontsize=16)
-                ax.scatter(gt_param[rand_ind], est_param[rand_ind], facecolors='none', edgecolors='b')
+                ax.scatter(gt_param_data[rand_ind], est_param_data[rand_ind], facecolors='none', edgecolors='b')
                 ax.set_xlim([0, 1.1*max_val])
                 ax.set_ylim([0, 1.1*max_val])
                 ax.plot(ax.get_xlim(), ax.get_ylim(), c='r', ls='--')
@@ -1689,7 +1698,7 @@ class DynamicSummaryWriter(object):
                 ax.set_xlabel('True', fontsize=14)
 
                 self.tf_writer.add_figure(
-                    tag=kwargs['title'].format(scatterer_name, parameter_name),
+                    tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction', ind),
                     figure=fig,
                     global_step=self.optimizer.iteration
                 )

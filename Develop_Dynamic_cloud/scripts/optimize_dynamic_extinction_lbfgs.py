@@ -246,6 +246,7 @@ class OptimizationScript(object):
             NotImplemented()
         # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
         extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(dynamic_grid=dynamic_grid),
+                                                    init_val=self.args.extinction,
                                                     min_bound=1e-5,
                                                     max_bound=2e2)
 
@@ -287,7 +288,7 @@ class OptimizationScript(object):
             # Compare estimator to ground-truth
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)
             writer.monitor_domain_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth)
-            writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.4)
+            writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.8)
             writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=0.000001))
 
             # save parse_arguments
@@ -325,6 +326,8 @@ class OptimizationScript(object):
         dynamic_scatterer = dynamic_medium.get_dynamic_scatterer()
         if dynamic_scatterer.type == 'MicrophysicalScatterer':
             ground_truth = dynamic_scatterer.get_dynamic_optical_scatterer(measurements.wavelength)
+        else:
+            ground_truth=dynamic_scatterer
         return ground_truth, dynamic_solver, measurements
 
     def get_optimizer(self):

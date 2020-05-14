@@ -199,6 +199,7 @@ class RadianceSensor(Sensor):
         radiance = radiance.T
         if multichannel:
             radiance = np.array(np.split(radiance, num_channels))
+            radiance = radiance.T
 
         if multiview:
             split_indices = np.cumsum(projection.npix[:-1])

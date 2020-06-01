@@ -135,7 +135,7 @@ class OptimizationScript(object):
                             action='store_true',
                             help='Use the ground-truth phase reconstruction.')
         parser.add_argument('--radiance_threshold',
-                            default=[0.04],
+                            default=[0.02],
                             nargs='+',
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
@@ -222,13 +222,13 @@ class OptimizationScript(object):
             mask_list = ground_truth.get_mask(threshold=0.000001)
         else:
             dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-            mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.9,
+            mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.75,
                                 time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
                                 vx_max = 5, vy_max=0, gt_velocity = cloud_velocity)
             show_mask=1
             if show_mask:
                 a = (mask_list[0].data).astype(int)
-                b = ((ground_truth.get_mask(threshold=0.000001)[0].resample(dynamic_grid[0]).data)).astype(int)
+                b = ((ground_truth.get_mask(threshold=0.0000001)[0].resample(dynamic_grid[0]).data)).astype(int)
                 print(np.sum((a > b)))
                 print(np.sum((a < b)))
                 shdom.cloud_plot(a)
@@ -255,7 +255,7 @@ class OptimizationScript(object):
 
         # Create a medium estimator object (optional Rayleigh scattering)
         air = self.air_generator.get_scatterer(wavelength)
-        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air,cloud_velocity)
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air.resample(grid),cloud_velocity)
 
         return medium_estimator
 

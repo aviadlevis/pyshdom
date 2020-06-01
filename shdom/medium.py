@@ -113,7 +113,11 @@ class OpticalScatterer(Scatterer):
     @albedo.setter
     def albedo(self, val):
         if val is not None: 
-            assert (val.max_value.astype(np.float32) <= 1.0 and val.min_value.astype(np.float32) >= 0.0), 'Single scattering albedo should be in the range [0, 1]'
+            # assert (val.max_value.astype(np.float32) <= 1.0 and val.min_value.astype(np.float32) >= 0.0), 'Single scattering albedo should be in the range [0, 1]'
+            if not (val.max_value.astype(np.float32) <= 1.0 and val.min_value.astype(np.float32) >= 0.0):
+                # print('Single scattering albedo should be in the range [0, 1]')
+                val.data[val.data>1] = 1
+                val.data[val.data < 0] = 0
         self._albedo = val
         
     @property

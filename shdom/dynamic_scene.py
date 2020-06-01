@@ -1853,7 +1853,9 @@ class DynamicSpaceCarver(object):
                         image = image[0]
 
                     image_mask = image > threshold
-
+                    if 0:
+                        plt.imshow(image_mask)
+                        plt.show()
                     projection = projection[image_mask.ravel(order='F') == 1]
 
                     carved_volume = shdom.core.space_carve(

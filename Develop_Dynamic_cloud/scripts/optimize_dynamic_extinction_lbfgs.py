@@ -109,6 +109,9 @@ class OptimizationScript(object):
                             choices=['l2', 'normcorr'],
                             default='l2',
                             help='Different loss functions for optimization. Currently only l2 is supported.')
+        parser.add_argument('--use_forward_cloud_velocity',
+                            action='store_true',
+                            help='Use the ground truth cloud velocity.')
         return parser
 
     def medium_args(self, parser):
@@ -125,9 +128,6 @@ class OptimizationScript(object):
         parser: argparse.ArgumentParser()
             parser initialized with basic arguments that are common to most rendering scripts.
         """
-        parser.add_argument('--use_forward_cloud_velocity',
-                            action='store_true',
-                            help='Use the ground truth cloud velocity.')
         parser.add_argument('--use_forward_albedo',
                             action='store_true',
                             help='Use the ground truth albedo.')
@@ -183,7 +183,7 @@ class OptimizationScript(object):
 
         CloudGenerator = None
         if init:
-            CloudGenerator = getattr(shdom.generate, init)
+            CloudGenerator = getattr(shdom.dynamic_scene, init)
             parser = CloudGenerator.update_parser(parser)
 
         AirGenerator = None
@@ -245,12 +245,15 @@ class OptimizationScript(object):
         else:
             NotImplemented()
         # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
-        extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(dynamic_grid=dynamic_grid),
-                                                    init_val=self.args.extinction,
+        # extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(dynamic_grid=dynamic_grid),
+        #                                             init_val=self.args.extinction,
+        #                                             min_bound=1e-5,
+        #                                             max_bound=2e2)
+        extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(measurements.wavelength, dynamic_grid),
                                                     min_bound=1e-5,
                                                     max_bound=2e2)
-
-        cloud_estimator = shdom.DynamicScattererEstimator(wavelength, extinction, albedo, phase,time_list=measurements.time_list)
+        kw_optical_scatterer = {"extinction": extinction, "albedo": albedo, "phase": phase}
+        cloud_estimator = shdom.DynamicScattererEstimator(wavelength=wavelength, time_list=measurements.time_list, **kw_optical_scatterer)
         cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)

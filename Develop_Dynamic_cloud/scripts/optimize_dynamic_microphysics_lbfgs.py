@@ -1,7 +1,7 @@
 import os, time
 import numpy as np
 import shdom
-from scripts.optimize_extinction_lbfgs import OptimizationScript as ExtinctionOptimizationScript
+from Develop_Dynamic_cloud.scripts.optimize_dynamic_extinction_lbfgs import OptimizationScript as ExtinctionOptimizationScript
 
 
 class OptimizationScript(ExtinctionOptimizationScript):
@@ -80,15 +80,15 @@ class OptimizationScript(ExtinctionOptimizationScript):
                             help='(default value: %(default)s) Pre-conditioning scale factor for effective variance estimation')
         return parser
 
-    def get_medium_estimator(self, measurements, ground_truth):
+    def get_medium_estimator(self, measurements: shdom.DynamicMeasurements, ground_truth: shdom.DynamicScatterer):
         """
         Generate the medium estimator for optimization.
 
         Parameters
         ----------
-        measurements: shdom.Measurements
+        measurements: shdom.DynamicMeasurements
             The acquired measurements.
-        ground_truth: shdom.Scatterer
+        ground_truth: shdom.DynamicScatterer
 
 
         Returns
@@ -98,71 +98,93 @@ class OptimizationScript(ExtinctionOptimizationScript):
         """
         # Define the grid for reconstruction
         if self.args.use_forward_grid:
-            lwc_grid = ground_truth.lwc.grid
-            reff_grid = ground_truth.reff.grid
-            veff_grid = ground_truth.reff.grid
+            _, lwc_grid = ground_truth.get_lwc()
+            _, reff_grid = ground_truth.get_reff()
+            _, veff_grid = ground_truth.get_veff()
         else:
             lwc_grid = reff_grid = veff_grid = self.cloud_generator.get_grid()
-        grid = lwc_grid + reff_grid + veff_grid
+        grid = lwc_grid[0] + reff_grid[0] + veff_grid[0]
+        grid = shdom.Grid(x=grid.x - grid.xmin, y=grid.y - grid.ymin, z=grid.z)
+
+        # Set cloud's velocity
+        if self.args.use_forward_cloud_velocity:
+            cloud_velocity = ground_truth.get_velocity()
+            cloud_velocity = cloud_velocity[0]*1000 #km/sec to m/sec
+        else:
+            cloud_velocity = None
 
         # Find a cloud mask for non-cloudy grid points
+        self.thr = 1e-6
         if self.args.use_forward_mask:
-            mask = ground_truth.get_mask(threshold=0.01)
+            mask_list = ground_truth.get_mask(threshold=self.thr)
         else:
-            carver = shdom.SpaceCarver(measurements)
-            mask = carver.carve(grid, agreement=0.9, thresholds=self.args.radiance_threshold)
+            dynamic_carver = shdom.DynamicSpaceCarver(measurements)
+            mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.75,
+                                                                           time_list=measurements.time_list,
+                                                                           thresholds=self.args.radiance_threshold,
+                                                                           vx_max=5, vy_max=0,
+                                                                           gt_velocity=cloud_velocity)
+            show_mask = 1
+            if show_mask:
+                a = (mask_list[0].data).astype(int)
+                b = ((ground_truth.get_mask(threshold=self.thr)[0].resample(dynamic_grid[0]).data)).astype(int)
+                print(np.sum((a > b)))
+                print(np.sum((a < b)))
+                shdom.cloud_plot(a)
+                shdom.cloud_plot(b)
 
         # Define micro-physical parameters: either optimize, keep constant at a specified value or use ground-truth
         if self.args.use_forward_lwc:
-            lwc = ground_truth.lwc
+            lwc,_ = ground_truth.get_lwc()
         elif self.args.const_lwc:
             lwc = self.cloud_generator.get_lwc(lwc_grid)
         else:
-            lwc = shdom.GridDataEstimator(self.cloud_generator.get_lwc(lwc_grid),
+            lwc = shdom.DynamicGridDataEstimator(self.cloud_generator.get_lwc(lwc_grid),
                                           min_bound=1e-5,
                                           max_bound=2.0,
                                           precondition_scale_factor=self.args.lwc_scaling)
-        lwc.apply_mask(mask)
+            lwc = lwc.dynamic_data
 
         if self.args.use_forward_reff:
-            reff = ground_truth.reff
+            reff,_ = ground_truth.get_reff()
         elif self.args.const_reff:
             reff = self.cloud_generator.get_reff(reff_grid)
         else:
             reff = shdom.GridDataEstimator(self.cloud_generator.get_reff(reff_grid),
-                                           min_bound=ground_truth.min_reff,
-                                           max_bound=ground_truth.max_reff,
+                                           min_bound=0,
+                                           max_bound=80,
                                            precondition_scale_factor=self.args.reff_scaling)
-        reff.apply_mask(mask)
+            reff = reff.dynamic_data
+
 
         if self.args.use_forward_veff:
-            veff = ground_truth.veff
+            veff,_ = ground_truth.get_veff()
         elif self.args.const_veff:
             veff = self.cloud_generator.get_veff(veff_grid)
         else:
             veff = shdom.GridDataEstimator(self.cloud_generator.get_veff(veff_grid),
-                                           max_bound=ground_truth.max_veff,
-                                           min_bound=ground_truth.min_veff,
+                                           min_bound=0.01,
+                                           max_bound=0.8,
                                            precondition_scale_factor=self.args.veff_scaling)
-        veff.apply_mask(mask)
+            veff = veff.dynamic_data
+
+        for lwc_i, reff_i, veff_i, mask in zip(lwc, reff, veff, mask_list):
+            lwc_i.apply_mask(mask)
+            reff_i.apply_mask(mask)
+            veff_i.apply_mask(mask)
 
         # Define a MicrophysicalScattererEstimator object
-        cloud_estimator = shdom.MicrophysicalScattererEstimator(ground_truth.mie, lwc, reff, veff)
-        cloud_estimator.set_mask(mask)
+        kw_microphysical_scatterer = {"lwc": lwc, "reff": reff, "veff": veff}
+        cloud_estimator = shdom.DynamicScattererEstimator(wavelength=measurements.wavelength, time_list=measurements.time_list, **kw_microphysical_scatterer)
+        cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)
-        medium_estimator = shdom.MediumEstimator(
-            loss_type=self.args.loss_type,
-            stokes_weights=self.args.stokes_weights
-        )
-        if self.args.add_rayleigh:
-            air = self.air_generator.get_scatterer(cloud_estimator.wavelength)
-            medium_estimator.set_grid(cloud_estimator.grid + air.grid)
-            medium_estimator.add_scatterer(air, 'air')
-        else:
-            medium_estimator.set_grid(cloud_estimator.grid)
 
-        medium_estimator.add_scatterer(cloud_estimator, self.scatterer_name)
+        air = self.air_generator.get_scatterer(cloud_estimator.wavelength)
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air.resample(grid), cloud_velocity,
+                                                        loss_type=self.args.loss_type,
+                                                        stokes_weights=self.args.stokes_weights
+                                                        )
         return medium_estimator
 
     def load_forward_model(self, input_directory):
@@ -184,11 +206,11 @@ class OptimizationScript(ExtinctionOptimizationScript):
             The acquired measurements
         """
         # Load forward model and measurements
-        medium, rte_solver, measurements = shdom.load_forward_model(input_directory)
+        dynamic_medium, dynamic_solver, measurements = shdom.load_dynamic_forward_model(input_directory)
 
         # Get micro-physical medium ground-truth
-        ground_truth = medium.get_scatterer(self.scatterer_name)
-        return ground_truth, rte_solver, measurements
+        ground_truth = dynamic_medium.get_dynamic_scatterer()
+        return ground_truth, dynamic_solver, measurements
 
     def get_summary_writer(self, measurements, ground_truth):
         """
@@ -209,14 +231,17 @@ class OptimizationScript(ExtinctionOptimizationScript):
         writer = None
         if self.args.log is not None:
             log_dir = os.path.join(self.args.input_dir, 'logs', self.args.log + '-' + time.strftime("%d-%b-%Y-%H:%M:%S"))
-            writer = shdom.SummaryWriter(log_dir)
+            writer = shdom.DynamicSummaryWriter(log_dir)
             writer.save_checkpoints(ckpt_period=20 * 60)
             writer.monitor_loss()
+            writer.monitor_images(measurements=measurements, ckpt_period=5 * 60)
+
 
             # Compare estimator to ground-truth
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)
-            writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.4, parameters=['lwc'])
-            writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=0.01))
+            writer.monitor_domain_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth)
+            writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.8)
+            writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=self.thr))
 
         return writer
 

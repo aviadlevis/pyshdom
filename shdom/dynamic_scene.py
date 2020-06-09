@@ -156,7 +156,6 @@ class DynamicScatterer(object):
         scatterer_velocity_list = (scatterer_location[1:,:] - scatterer_location[:-1,:]) / (time_list[1:] - time_list[:-1])
         return scatterer_velocity_list
 
-
     def add_temporary_scatterer(self, temporary_scatterer_list):
         if not isinstance(temporary_scatterer_list,list):
             temporary_scatterer_list =[temporary_scatterer_list]
@@ -286,7 +285,12 @@ class DynamicScatterer(object):
         first_mask = True
         for temporal_scatterer in self._temporary_scatterer_list:
             scatterer = temporal_scatterer.get_scatterer()
-            mask = scatterer.extinction.data > threshold
+            if self._type == 'MicrophysicalScatterer':
+                mask = scatterer.lwc.data > threshold
+            elif self._type == 'OpticalScatterer':
+                mask = scatterer.extinction.data > threshold
+            else:
+                assert 'Scatterer type is not supported'
             if first_mask:
                 joint_mask = mask
                 first_mask = False
@@ -333,12 +337,69 @@ class DynamicScatterer(object):
         for i, temporal_scatterer in enumerate(dynamic_scatterer._temporary_scatterer_list):
             scatterer = temporal_scatterer.get_scatterer()
             data = scatterer.extinction.data
-            grid = scatterer.grid
+            grid = scatterer.extinction.grid
             extinction = shdom.GridData(grid, data)
             if dynamic_grid is not None:
                 extinction = extinction.resample(dynamic_grid[i])
             extinction_list.append(extinction)
         return extinction_list
+
+    def get_grid(self):
+        grid_list = []
+        for i, temporal_scatterer in enumerate(self._temporary_scatterer_list):
+            scatterer = temporal_scatterer.get_scatterer()
+            grid_list.append(scatterer.grid)
+        return grid_list
+
+    def get_lwc(self,dynamic_grid=None):
+        if not self._type == 'MicrophysicalScatterer':
+            assert 'Scatterer type has no LWC attribute'
+        lwc_list = []
+        grid_list = []
+        for i, temporal_scatterer in enumerate(self._temporary_scatterer_list):
+            scatterer = temporal_scatterer.get_scatterer()
+            data = scatterer.lwc.data
+            grid = scatterer.lwc.grid
+            lwc = shdom.GridData(grid, data)
+            if dynamic_grid is not None:
+                lwc = lwc.resample(dynamic_grid[i])
+            lwc_list.append(lwc)
+            grid_list.append(lwc.grid)
+        return lwc_list, grid_list
+
+    def get_reff(self,dynamic_grid=None):
+        if not self._type == 'MicrophysicalScatterer':
+            assert 'Scatterer type has no reff attribute'
+        reff_list = []
+        grid_list = []
+        for i, temporal_scatterer in enumerate(self._temporary_scatterer_list):
+            scatterer = temporal_scatterer.get_scatterer()
+            data = scatterer.reff.data
+            grid = scatterer.reff.grid
+            reff = shdom.GridData(grid, data)
+            if dynamic_grid is not None:
+                reff = reff.resample(dynamic_grid[i])
+            reff_list.append(reff)
+            grid_list.append(reff.grid)
+
+        return reff_list, grid_list
+
+    def get_veff(self,dynamic_grid=None):
+        if not self._type == 'MicrophysicalScatterer':
+            assert 'Scatterer type has no veff attribute'
+        veff_list = []
+        grid_list = []
+        for i, temporal_scatterer in enumerate(self._temporary_scatterer_list):
+            scatterer = temporal_scatterer.get_scatterer()
+            data = scatterer.veff.data
+            grid = scatterer.veff.grid
+            veff = shdom.GridData(grid, data)
+            if dynamic_grid is not None:
+                veff = veff.resample(dynamic_grid[i])
+            veff_list.append(veff)
+            grid_list.append(veff.grid)
+
+        return veff_list, grid_list
 
 
     def get_temporary_scatterer_list(self):
@@ -410,6 +471,7 @@ class DynamicMedium(object):
 
     def get_dynamic_scatterer(self):
         return self._dynamic_scatterer
+
 
     def get_dynamic_medium(self):
         return self._dynamic_medium
@@ -610,6 +672,7 @@ class DynamicCamera(shdom.Camera):
             images.append(self.sensor.render(rte_solver, projection, n_jobs, verbose))
         return images
 
+
 class DynamicMeasurements(shdom.Measurements):
     def __init__(self, camera=None, images=None, pixels=None, wavelength=None, uncertainties=None, time_list=None):
         super().__init__(camera=camera, images=images, pixels=pixels, wavelength=wavelength, uncertainties=uncertainties)
@@ -623,22 +686,260 @@ class DynamicMeasurements(shdom.Measurements):
         return self._time_list
 
 
+class Homogeneous(shdom.CloudGenerator):
+    """
+    Define a homogeneous Medium.
+
+    Parameters
+    ----------
+    args: arguments from argparse.ArgumentParser()
+        Arguments required for this generator.
+    """
+    def __init__(self, args):
+        super(Homogeneous, self).__init__(args)
+
+    @classmethod
+    def update_parser(self, parser):
+        """
+        Update the argument parser with parameters relevant to this generator.
+
+        Parameters
+        ----------
+        parser: argparse.ArgumentParser()
+            The main parser to update.
+
+        Returns
+        -------
+        parser: argparse.ArgumentParser()
+            The updated parser.
+        """
+        parser.add_argument('--nx',
+                            default=10,
+                            type=int,
+                            help='(default value: %(default)s) Number of grid cell in x (North) direction')
+        parser.add_argument('--ny',
+                            default=10,
+                            type=int,
+                            help='(default value: %(default)s) Number of grid cell in y (East) direction')
+        parser.add_argument('--nz',
+                            default=10,
+                            type=int,
+                            help='(default value: %(default)s) Number of grid cell in z (Up) direction')
+        parser.add_argument('--domain_size',
+                            default=1.0,
+                            type=float,
+                            help='(default value: %(default)s) Cubic domain size [km]')
+        parser.add_argument('--extinction',
+                            default=1.0,
+                            type=np.float32,
+                            help='(default value: %(default)s) Extinction [km^-1]')
+        parser.add_argument('--lwc',
+                            default=None,
+                            type=np.float32,
+                            help='(default value: %(default)s) Liquid water content of the center voxel [g/m^3]. If specified, extinction argument is ignored.')
+        parser.add_argument('--reff',
+                            default=10.0,
+                            type=np.float32,
+                            help='(default value: %(default)s) Effective radius [micron]')
+        parser.add_argument('--veff',
+                            default=0.1,
+                            type=np.float32,
+                            help='(default value: %(default)s) Effective variance')
+        parser.add_argument('--time_list',
+                            default=[0]*9,
+                            type=float,
+                            help='(default value: %(default)s) Effective variance')
+        parser.add_argument('--cloud_velocity',
+                            default=[0,0,0],
+                            type=np.float32,
+                            help='Estimated cloud velocity.')
+        return parser
+
+    def get_grid(self):
+        """
+        Retrieve the scatterer grid.
+
+        Returns
+        -------
+        grid: shdom.Grid
+            A Grid object for this scatterer
+        """
+        time_list = np.asarray(self.args.time_list).reshape((-1, 1))
+        scatterer_velocity_list = np.asarray(self.args.cloud_velocity).reshape((3, -1))
+        assert scatterer_velocity_list.shape[0] == 3 and \
+               (scatterer_velocity_list.shape[1] == time_list.shape[0] or scatterer_velocity_list.shape[1] == 1), \
+            'time_list, scatterer_velocity_list have wrong dimensions'
+        scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T  # km
+        bb = shdom.BoundingBox(0.0, 0.0, 0.0, self.args.domain_size, self.args.domain_size, self.args.domain_size)
+        grid_list = []
+        for scatterer_shift in scatterer_shifts:
+            grid_list.append(shdom.Grid(bounding_box=bb,
+                x=np.linspace(scatterer_shift[1], self.args.nx+ scatterer_shift[0], self.args.nx),
+                       y=np.linspace(scatterer_shift[1], self.args.ny + scatterer_shift[1], self.args.ny),
+                       z=np.linspace(0.1 + scatterer_shift[2], self.args.nz + scatterer_shift[2], self.args.nz)))
+            # grid_list.append(shdom.Grid(bounding_box=bb, nx=self.args.nx + scatterer_shift[0], ny=self.args.ny+ scatterer_shift[1], nz=self.args.nz+ scatterer_shift[2]))
+        return grid_list
+
+    def get_extinction(self, wavelength=None, grid_list=None):
+        """
+        Retrieve the optical extinction at a single wavelength on a grid.
+
+        Parameters
+        ----------
+        wavelength: float
+            Wavelength in microns. A Mie table at this wavelength should be added prior (see add_mie method).
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        extinction: shdom.GridData
+            A GridData object containing the optical extinction on a grid
+
+        Notes
+        -----
+        If the LWC is specified then the extinction is derived using (lwc,reff,veff). If not the extinction needs to be directly specified.
+        The input wavelength is rounded to three decimals.
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+        extinction =[]
+        if self.args.lwc is None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    ext_data = self.args.extinction
+                elif grid.type == '1D':
+                    ext_data = np.full(shape=(grid.nz), fill_value=self.args.extinction, dtype=np.float32)
+                elif grid.type == '3D':
+                    ext_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.extinction, dtype=np.float32)
+                extinction.append(shdom.GridData(grid, ext_data))
+        else:
+            assert wavelength is not None, 'No wavelength provided'
+            lwc_list = self.get_lwc(grid_list)
+            reff_list = self.get_reff(grid_list)
+            veff_list = self.get_veff(grid_list)
+            for lwc, reff, veff in zip(lwc_list,reff_list,veff_list):
+                extinction.append(self.mie[shdom.float_round(wavelength)].get_extinction(lwc, reff, veff))
+        return extinction
+
+    def get_lwc(self, grid_list=None):
+        """
+        Retrieve the liquid water content.
+
+        Parameters
+        ----------
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        lwc: shdom.GridData
+            A GridData object containing liquid water content (g/m^3) on a 3D grid.
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+
+        lwc = self.args.lwc
+        lwc_list =[]
+
+        if lwc is not None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    lwc_data = self.args.lwc
+                elif grid.type == '1D':
+                    lwc_data = np.full(shape=(grid.nz), fill_value=self.args.lwc, dtype=np.float32)
+                elif grid.type == '3D':
+                    lwc_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.lwc, dtype=np.float32)
+                lwc_list.append(shdom.GridData(grid, lwc_data))
+        return lwc_list
+
+    def get_reff(self, grid_list=None):
+        """
+        Retrieve the effective radius on a grid.
+
+        Parameters
+        ----------
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        reff: shdom.GridData
+            A GridData object containing the effective radius [microns] on a grid
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+
+        reff = self.args.lwc
+        reff_list = []
+
+        if reff is not None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    reff_data = self.args.reff
+                elif grid.type == '1D':
+                    reff_data = np.full(shape=(grid.nz), fill_value=self.args.reff, dtype=np.float32)
+                elif grid.type == '3D':
+                    reff_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.reff, dtype=np.float32)
+                reff_list.append(shdom.GridData(grid, reff_data))
+        return reff_list
+
+    def get_veff(self, grid_list=None):
+        """
+        Retrieve the effective radius on a grid.
+
+        Parameters
+        ----------
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        reff: shdom.GridData
+            A GridData object containing the effective radius [microns] on a grid
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+
+        veff = self.args.lwc
+        veff_list = []
+
+        if veff is not None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    veff_data = self.args.veff
+                elif grid.type == '1D':
+                    veff_data = np.full(shape=(grid.nz), fill_value=self.args.veff, dtype=np.float32)
+                elif grid.type == '3D':
+                    veff_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.veff, dtype=np.float32)
+                veff_list.append(shdom.GridData(grid, veff_data))
+        return veff_list
+
+
 class DynamicGridDataEstimator(object):
-    def __init__(self, grid_data_list,init_val,min_bound,max_bound):
-        self._dynamic_grid_data = []
-        for grid_data in grid_data_list:
+    # def __init__(self, grid_data_list,init_val,min_bound=None, max_bound=None, precondition_scale_factor=1.0):
+    #     self._dynamic_grid_data = []
+    #     for grid_data in grid_data_list:
+    #         # init_vals = np.random.normal(loc=0.01, scale=0.001,size=grid_data.data.shape)
+    #         init_vals = np.ones_like(grid_data.data)*init_val
+    #         init_grid_data = shdom.GridData(grid_data.grid,init_vals)
+    #         self._dynamic_grid_data.append(shdom.GridDataEstimator(init_grid_data,min_bound, max_bound,precondition_scale_factor))
+
+    def __init__(self, dynamic_data, min_bound=None, max_bound=None, precondition_scale_factor=1.0):
+        self._dynamic_data = []
+        for data in dynamic_data:
             # init_vals = np.random.normal(loc=0.01, scale=0.001,size=grid_data.data.shape)
-            init_vals = np.ones_like(grid_data.data)*init_val
-            init_drid_data = shdom.GridData(grid_data.grid,init_vals)
-            self._dynamic_grid_data.append(shdom.GridDataEstimator(init_drid_data,min_bound, max_bound))
+            # init_vals = np.ones_like(grid_data.data) * init_val
+            init_data = shdom.GridData(data.grid, data.data)
+            self._dynamic_data.append(shdom.GridDataEstimator(init_data,min_bound, max_bound,precondition_scale_factor))
 
-    def get_dynamic_grid_data(self):
-        return self._dynamic_grid_data
-
+    def get_dynamic_data(self):
+        return self._dynamic_data
 
     @property
-    def dynamic_grid_data(self):
-        return self._dynamic_grid_data
+    def dynamic_data(self):
+        return self._dynamic_data
+
 
 class TemporaryScattererEstimator(shdom.ScattererEstimator,TemporaryScatterer):
 
@@ -646,23 +947,64 @@ class TemporaryScattererEstimator(shdom.ScattererEstimator,TemporaryScatterer):
         TemporaryScatterer.__init__(self,scatterer,time)
         shdom.ScattererEstimator.__init__(self)
 
+
 class DynamicScattererEstimator(object):
-    def __init__(self, wavelength, dynamic_extinction, dynamic_albedo, dynamic_phase, time_list):
+    def __init__(self, wavelength, time_list, **kwargs):
         self._num_scatterers = 0
-        self._wavelength = []
+        self._wavelength = wavelength
         self._time_list = []
         self._type = None
-        assert isinstance(dynamic_extinction,DynamicGridDataEstimator),\
-            'extinction type has to be DynamicGridDataEstimator'
-        assert len(dynamic_extinction.dynamic_grid_data)==len(dynamic_albedo)==len(dynamic_phase)==len(time_list),\
-            'All must have the same length'
-        self._temporary_scatterer_estimator_list = []
-        for extinction, albedo, phase, time in \
-                zip(dynamic_extinction.get_dynamic_grid_data(), dynamic_albedo, dynamic_phase, time_list):
-            scatterer_estimator = shdom.OpticalScattererEstimator(wavelength, extinction, albedo, phase)
-            self._temporary_scatterer_estimator_list.append(TemporaryScattererEstimator(scatterer_estimator,time))
-            self._time_list.append(time)
-            self._num_scatterers += 1
+        dynamic_lwc = None
+        dynamic_extinction = None
+        for key, value in kwargs.items():
+            if key == "extinction":
+                assert isinstance(value,DynamicGridDataEstimator),\
+                    'extinction type has to be DynamicGridDataEstimator'
+                assert dynamic_lwc is None
+                dynamic_extinction = value
+                self._type = 'OpticalScattererEstimator'
+            elif key == "albedo":
+                dynamic_albedo = value
+            elif key == "phase":
+                dynamic_phase = value
+            elif key == "lwc":
+                assert dynamic_extinction is None
+                dynamic_lwc = value
+                self._type = 'MicrophysicalScatterer'
+            elif key == "reff":
+                dynamic_reff = value
+            elif key == "veff":
+                dynamic_veff = value
+
+        if self._type == 'OpticalScattererEstimator':
+            assert len(dynamic_extinction.dynamic_data)==len(dynamic_albedo)==len(dynamic_phase)==len(time_list),\
+            'All attributes should have the same length'
+            self._temporary_scatterer_estimator_list = []
+            for extinction, albedo, phase, time in \
+                    zip(dynamic_extinction.get_dynamic_data(), dynamic_albedo, dynamic_phase, time_list):
+                scatterer_estimator = shdom.OpticalScattererEstimator(wavelength, extinction, albedo, phase)
+                self._temporary_scatterer_estimator_list.append(TemporaryScattererEstimator(scatterer_estimator,time))
+                self._time_list.append(time)
+                self._num_scatterers += 1
+        elif self._type == 'MicrophysicalScatterer':
+            # Mie scattering for water droplets
+            mie = shdom.MiePolydisperse()
+            mie_table_path = 'mie_tables/polydisperse/Water_{}nm.scat'.format(shdom.int_round(wavelength))
+            mie.read_table(file_path=mie_table_path)
+            # assert len(dynamic_extinction.dynamic_grid_data) == len(dynamic_albedo) == len(dynamic_phase) == len(
+            #     time_list), \
+            #     'All attributes should have the same length'
+            self._temporary_scatterer_estimator_list = []
+            for lwc, reff, veff, time in \
+                    zip(dynamic_lwc, dynamic_reff, dynamic_veff, time_list):
+                scatterer_estimator = shdom.MicrophysicalScattererEstimator(mie, lwc, reff, veff)
+                self._temporary_scatterer_estimator_list.append(
+                    TemporaryScattererEstimator(scatterer_estimator, time))
+                self._time_list.append(time)
+                self._num_scatterers += 1
+            else:
+                assert 'Not supported'
+
 
     def get_velocity(self):
         assert self._temporary_scatterer_estimator_list is not None and self._num_scatterers > 1, \
@@ -677,8 +1019,6 @@ class DynamicScattererEstimator(object):
                     time_list[1:] - time_list[:-1])
         return scatterer_velocity_list
 
-        self._wavelength = wavelength
-        self._type = 'OpticalScattererEstimator'
 
 
     def set_mask(self, mask_list):
@@ -709,20 +1049,30 @@ class DynamicScattererEstimator(object):
         return self._time_list
 
 
-
 class DynamicMediumEstimator(object):
+    # def __init__(self, dynamic_scatterer=None, air=None):
+    #     self._dynamic_medium_estimator = []
+    #     if dynamic_scatterer is not None and air is not None:
+    #         for scatterer in dynamic_scatterer.get_dynamic_optical_scatterer():
+    #             medium_estimator = shdom.MediumEstimator()
+    #             medium_estimator.add_scatterer(air, 'air')
+    #             medium_estimator.add_scatterer(scatterer, 'cloud')
+    #             medium_estimator.set_grid(scatterer.grid + air.grid)
+    #             self._dynamic_medium_estimator.append(medium_estimator)
+    #     self._wavelength = medium_estimator.wavelength
 
-    def __init__(self, dynamic_scatterer_estimator=None, air=None,scatterer_velocity=[0,0,0]):
+    def __init__(self, dynamic_scatterer_estimator=None, air=None, scatterer_velocity=[0,0,0],
+                 loss_type='l2', exact_single_scatter=True, stokes_weights=None):
         self._num_mediums = 0
         self._wavelength = []
         self._dynamic_medium = []
         self._time_list = []
-        self._dynamic_scatterer = None
+        self._dynamic_scatterer_estimator = dynamic_scatterer_estimator
         self._scatterer_velocity = scatterer_velocity
         if dynamic_scatterer_estimator is not None and air is not None:
-            self.set_dynamic_medium_estimator(dynamic_scatterer_estimator,air)
+            self.set_dynamic_medium_estimator(dynamic_scatterer_estimator,air,loss_type, exact_single_scatter, stokes_weights)
 
-    def set_dynamic_medium_estimator(self, dynamic_scatterer_estimator, air):
+    def set_dynamic_medium_estimator(self, dynamic_scatterer_estimator, air, loss_type='l2', exact_single_scatter=True, stokes_weights=None):
         assert isinstance(dynamic_scatterer_estimator,DynamicScattererEstimator) and isinstance(air,shdom.Scatterer)
         self._num_mediums = 0
         self._dynamic_medium_estimator = []
@@ -738,7 +1088,7 @@ class DynamicMediumEstimator(object):
                                    scatterer.wavelength), ' medium wavelength {} differs from dynamic_scatterers wavelength {}'.format(
                     self.wavelength, scatterer.wavelength)
             medium_grid = scatterer.grid + air.grid
-            medium = shdom.MediumEstimator(medium_grid)
+            medium = shdom.MediumEstimator(grid=medium_grid, loss_type=loss_type, exact_single_scatter=exact_single_scatter, stokes_weights=stokes_weights)
             medium.add_scatterer(scatterer, name='cloud')
             medium.add_scatterer(air, name='air')
             self._dynamic_medium_estimator.append(medium)
@@ -746,16 +1096,7 @@ class DynamicMediumEstimator(object):
             self._time_list.append(time)
 
 
-    # def __init__(self, dynamic_scatterer=None, air=None):
-    #     self._dynamic_medium_estimator = []
-    #     if dynamic_scatterer is not None and air is not None:
-    #         for scatterer in dynamic_scatterer.get_dynamic_optical_scatterer():
-    #             medium_estimator = shdom.MediumEstimator()
-    #             medium_estimator.add_scatterer(air, 'air')
-    #             medium_estimator.add_scatterer(scatterer, 'cloud')
-    #             medium_estimator.set_grid(scatterer.grid + air.grid)
-    #             self._dynamic_medium_estimator.append(medium_estimator)
-    #     self._wavelength = medium_estimator.wavelength
+
 
     def get_dynamic_medium(self):
         return self._dynamic_medium_estimator
@@ -787,73 +1128,81 @@ class DynamicMediumEstimator(object):
         return state_gradient, loss, images
 
     def compute_gradient_regularization(self,regularization_const, regularization_type='l2'):
-        beta_avg = 1
+        for param_name, param in self.dynamic_scatterer_estimator.temporary_scatterer_estimator_list[0].scatterer.estimators.items():
+            typical_avg = {
+                'extinction': 1,
+                'lwc': 0.01,
+                'reff': 10,
+                'veff': 0.01
+            }
+            param_typical_avg = typical_avg[param_name]
 
-        estimated_extinction_stack = []
-        for scatterer_estimator in self._dynamic_medium_estimator:
-            estimated_extinction_stack.append(scatterer_estimator.get_state())
-        dynamic_estimated_extinction = np.stack(estimated_extinction_stack, axis=1)
-        grad = np.zeros_like(dynamic_estimated_extinction)
-        grad[:,:-1] += 2*(dynamic_estimated_extinction[:,:-1] - dynamic_estimated_extinction[:,1:])
-        grad[:, 1:] += 2*(dynamic_estimated_extinction[:,1:] - dynamic_estimated_extinction[:,:-1])
-        grad = np.reshape(grad,(-1,), order='F') / dynamic_estimated_extinction.shape[0] \
-               / (dynamic_estimated_extinction.shape[1]-1) / beta_avg**2
+            estimated_parameter_stack = []
+            for scatterer_estimator in self._dynamic_medium_estimator:
+                estimated_parameter_stack.append(scatterer_estimator.get_state())
+            dynamic_estimated_parameter = np.stack(estimated_parameter_stack, axis=1)
+            grad = np.zeros_like(dynamic_estimated_parameter)
+            if regularization_type == 'l2':
+                grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])
+                grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1])
+                grad = np.reshape(grad,(-1,), order='F') / dynamic_estimated_parameter.shape[0] \
+                       / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
 
-        loss =0
-        loss += np.sum((dynamic_estimated_extinction[:,:-1] - dynamic_estimated_extinction[:,1:])**2)
-        loss /= (dynamic_estimated_extinction.shape[0] * (dynamic_estimated_extinction.shape[1]-1) * beta_avg**2)
-
+                loss = np.sum((dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])**2)
+                loss /= (dynamic_estimated_parameter.shape[0] * (dynamic_estimated_parameter.shape[1]-1) * param_typical_avg**2)
+            else:
+                NotImplemented()
         return regularization_const * loss, regularization_const * grad #unit less grad
 
-    def scatterer_velocity_estimate(self):
-        estimated_extinction_stack = []
-
-        # start_x = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.xmin
-        # stop_x = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.xmax
-        # dx = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dx
-        #
-        # start_y = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.ymin
-        # stop_y = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.ymax
-        # dy = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dy
-        #
-        # z = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.z
-        # grid = shdom.Grid(x=np.arange(start_x,stop_x,dx),y=np.arange(start_y,stop_y,dy), z=z)
-
-        delta_list = []
-        for medium_estimator in self._dynamic_medium_estimator:
-            estimated_extinction_stack.append(medium_estimator.estimators['cloud'].extinction)
-            dx = medium_estimator.estimators['cloud'].extinction.grid.dx
-            dy = medium_estimator.estimators['cloud'].extinction.grid.dy
-            # dz = medium_estimator.estimators['cloud'].extinction.grid.dz
-            delta_list.append([dx,dy,1])
-
-        # dynamic_estimated_extinction = np.stack(estimated_extinction_stack, axis=3)
-        min_err = np.inf
-        for dv_x in np.arange(-1,1,0.2):
-            for dv_y in np.arange(-3,3,0.3):
-                shifted_extinction = []
-                for extinction, time, delta in zip(estimated_extinction_stack,self._time_list,delta_list):
-                    shift = 1e-3 * time * np.array([dv_x, dv_y, 0])  # km
-                    # shifted_extinction.append(sci.shift(extinction, -shift, mode='constant',cval=0))
-                    grid = shdom.Grid(x=extinction.grid.x + shift[0], y=extinction.grid.y + shift[1], z=extinction.grid.z + shift[2])
-                    shifted_extinction.append(extinction.resample(grid).data)
-                # shifted_extinction = np.stack(shifted_extinction, axis=3)
-                err = 0
-                for extinction_i in shifted_extinction:
-                    for extinction_j in shifted_extinction:
-                        err += np.linalg.norm((extinction_i-extinction_j).reshape(-1,1),ord=1)
-                if err < min_err:
-                    min_err = err
-                    dv = [dv_x, dv_y, 0]
-        self._scatterer_velocity = [x - y for x, y in zip(self._scatterer_velocity, dv)]
-        for medium_estimator, time in zip(self._dynamic_medium_estimator, self._time_list):
-            grid = medium_estimator.estimators['cloud'].extinction.grid
-            grid.x -= 1e-3 *dv[0]*time
-            grid.y -= 1e-3 *dv[1]*time
-            grid = medium_estimator.grid
-            grid.x -= 1e-3 *dv[0]*time
-            grid.y -= 1e-3 *dv[1]*time
-        return dv
+    # def scatterer_velocity_estimate(self):
+    #     estimated_extinction_stack = []
+    #
+    #     # start_x = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.xmin
+    #     # stop_x = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.xmax
+    #     # dx = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dx
+    #     #
+    #     # start_y = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.ymin
+    #     # stop_y = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.ymax
+    #     # dy = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dy
+    #     #
+    #     # z = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.z
+    #     # grid = shdom.Grid(x=np.arange(start_x,stop_x,dx),y=np.arange(start_y,stop_y,dy), z=z)
+    #
+    #     delta_list = []
+    #     for medium_estimator in self._dynamic_medium_estimator:
+    #         estimated_extinction_stack.append(medium_estimator.estimators['cloud'].extinction)
+    #         dx = medium_estimator.estimators['cloud'].extinction.grid.dx
+    #         dy = medium_estimator.estimators['cloud'].extinction.grid.dy
+    #         # dz = medium_estimator.estimators['cloud'].extinction.grid.dz
+    #         delta_list.append([dx,dy,1])
+    #
+    #     # dynamic_estimated_extinction = np.stack(estimated_extinction_stack, axis=3)
+    #     min_err = np.inf
+    #     for dv_x in np.arange(-1,1,0.2):
+    #         for dv_y in np.arange(-3,3,0.3):
+    #             shifted_extinction = []
+    #             for extinction, time, delta in zip(estimated_extinction_stack,self._time_list,delta_list):
+    #                 shift = 1e-3 * time * np.array([dv_x, dv_y, 0])  # km
+    #                 # shifted_extinction.append(sci.shift(extinction, -shift, mode='constant',cval=0))
+    #                 grid = shdom.Grid(x=extinction.grid.x + shift[0], y=extinction.grid.y + shift[1], z=extinction.grid.z + shift[2])
+    #                 shifted_extinction.append(extinction.resample(grid).data)
+    #             # shifted_extinction = np.stack(shifted_extinction, axis=3)
+    #             err = 0
+    #             for extinction_i in shifted_extinction:
+    #                 for extinction_j in shifted_extinction:
+    #                     err += np.linalg.norm((extinction_i-extinction_j).reshape(-1,1),ord=1)
+    #             if err < min_err:
+    #                 min_err = err
+    #                 dv = [dv_x, dv_y, 0]
+    #     self._scatterer_velocity = [x - y for x, y in zip(self._scatterer_velocity, dv)]
+    #     for medium_estimator, time in zip(self._dynamic_medium_estimator, self._time_list):
+    #         grid = medium_estimator.estimators['cloud'].extinction.grid
+    #         grid.x -= 1e-3 *dv[0]*time
+    #         grid.y -= 1e-3 *dv[1]*time
+    #         grid = medium_estimator.grid
+    #         grid.x -= 1e-3 *dv[0]*time
+    #         grid.y -= 1e-3 *dv[1]*time
+    #     return dv
 
     def compute_direct_derivative(self, dynamic_solver):
         for ind, medium_estimator in enumerate(self._dynamic_medium_estimator):
@@ -896,10 +1245,11 @@ class DynamicMediumEstimator(object):
         return num_parameters
 
     def get_scatterer(self, scatterer_name=None):
-        dynamic_scatterer_estimator = DynamicScatterer()
-        for i, medium_estimator in enumerate(self._dynamic_medium_estimator):
-            dynamic_scatterer_estimator.add_temporary_scatterer(TemporaryScatterer(medium_estimator.get_scatterer(scatterer_name),time=i))
-        return dynamic_scatterer_estimator
+        # dynamic_scatterer_estimator = DynamicScatterer()
+        # for i, medium_estimator in enumerate(self._dynamic_medium_estimator):
+        #     dynamic_scatterer_estimator.add_temporary_scatterer(TemporaryScatterer(medium_estimator.get_scatterer(scatterer_name),time=i))
+        # return dynamic_scatterer_estimator
+        return self._dynamic_scatterer_estimator
 
     @property
     def scatterer_velocity (self):
@@ -920,6 +1270,10 @@ class DynamicMediumEstimator(object):
     @property
     def dynamic_medium_estimator(self):
         return self._dynamic_medium_estimator
+
+    @property
+    def dynamic_scatterer_estimator(self):
+        return self._dynamic_scatterer_estimator
 
 
 class DynamicLocalOptimizer(object):
@@ -1350,7 +1704,7 @@ class DynamicSummaryWriter(object):
         kwargs = {
             'ckpt_period': ckpt_period,
             'ckpt_time': time.time(),
-            'title': ['{}/delta/{}', '{}/epsilon/{}']
+            'title': ['{}/delta/{} at time{}', '{}/epsilon/{} at time{}']
         }
         self.add_callback_fn(self.scatterer_error_cbfn, kwargs)
         if hasattr(self, '_ground_truth'):
@@ -1572,17 +1926,20 @@ class DynamicSummaryWriter(object):
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
             for gt_temporary_scatterer, estimator_temporary_scatterer in \
-                    zip(gt_dynamic_scatterer.get_temporary_scatterer_list(), est_scatterer.get_temporary_scatterer_list()):
-                gt_param = gt_temporary_scatterer.scatterer.extinction
-                est_param = estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data.flatten()
-                gt_param = gt_param.data.flatten()
+                    zip(gt_dynamic_scatterer.get_temporary_scatterer_list(), est_scatterer.temporary_scatterer_estimator_list):
+                for parameter_name, parameter in estimator_temporary_scatterer.scatterer.estimators.items():
+                    gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
+                    est_param = parameter.resample(gt_param.grid).data.flatten()
+                # gt_param = gt_temporary_scatterer.scatterer.extinction
+                # est_param = estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data.flatten()
+                    gt_param = gt_param.data.flatten()
 
-                delta = (np.linalg.norm(est_param, 1) - np.linalg.norm(gt_param, 1)) / np.linalg.norm(gt_param, 1)
-                epsilon = np.linalg.norm((est_param - gt_param), 1) / np.linalg.norm(gt_param, 1)
-                self.tf_writer.add_scalar(kwargs['title'][0].format(dynamic_scatterer_name, gt_temporary_scatterer.time), delta,
-                                          self.optimizer.iteration)
-                self.tf_writer.add_scalar(kwargs['title'][1].format(dynamic_scatterer_name, gt_temporary_scatterer.time), epsilon,
-                                          self.optimizer.iteration)
+                    delta = (np.linalg.norm(est_param, 1) - np.linalg.norm(gt_param, 1)) / np.linalg.norm(gt_param, 1)
+                    epsilon = np.linalg.norm((est_param - gt_param), 1) / np.linalg.norm(gt_param, 1)
+                    self.tf_writer.add_scalar(kwargs['title'][0].format(dynamic_scatterer_name, parameter_name, gt_temporary_scatterer.time), delta,
+                                              self.optimizer.iteration)
+                    self.tf_writer.add_scalar(kwargs['title'][1].format(dynamic_scatterer_name, parameter_name, gt_temporary_scatterer.time), epsilon,
+                                              self.optimizer.iteration)
 
 
     def domain_mean_cbfn(self, kwargs):
@@ -1596,26 +1953,26 @@ class DynamicSummaryWriter(object):
         """
 
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
-            est_param = 0
-            gt_param = 0
-            len_param = 0
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
-            for gt_temporary_scatterer, estimator_temporary_scatterer in \
-                    zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
-                        est_scatterer.get_temporary_scatterer_list()):
-                gt = gt_temporary_scatterer.scatterer.extinction
-                est_param += np.mean(estimator_temporary_scatterer.scatterer.extinction.resample(gt.grid).data)
-                gt_param += np.mean(gt.data)
-                len_param +=1
+            parm_scatterer = est_scatterer.temporary_scatterer_estimator_list[0]
+            for parameter_name, parameter in parm_scatterer.scatterer.estimators.items():
+                gt_param_mean = 0
+                est_param_mean = 0
+                for gt_temporary_scatterer, estimator_temporary_scatterer in \
+                        zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                            est_scatterer.temporary_scatterer_estimator_list):
+                    gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
+                    est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(gt_param.grid)
+                    gt_param_mean += gt_param.data.mean()
+                    est_param_mean += est_param.data.mean()
 
-            est_param /= len_param
-            gt_param /= len_param
-
-            self.tf_writer.add_scalars(
-                main_tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction'),
-                tag_scalar_dict={'estimated': est_param, 'true': gt_param},
-                global_step=self.optimizer.iteration
-            )
+                gt_param_mean = gt_param_mean.mean()
+                est_param_mean = est_param_mean.mean()
+                self.tf_writer.add_scalars(
+                    main_tag=kwargs['title'].format(dynamic_scatterer_name, parameter_name),
+                    tag_scalar_dict={'estimated': est_param_mean, 'true': gt_param_mean},
+                    global_step=self.optimizer.iteration
+                )
 
     def horizontal_mean_cbfn(self, kwargs):
         """
@@ -1629,33 +1986,37 @@ class DynamicSummaryWriter(object):
 
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
-            for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
-                    enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
-                        est_scatterer.get_temporary_scatterer_list())):
-                gt_param = (gt_temporary_scatterer.scatterer.extinction)
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", category=RuntimeWarning)
-                    est_param_data = copy.copy(estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data)
-                    est_param_data[(estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == False)] = np.nan
-                    est_param_mean = np.nan_to_num(np.nanmean(est_param_data, axis=(0, 1)))
+            parm_scatterer = est_scatterer.temporary_scatterer_estimator_list[0]
+            for parameter_name, parameter in parm_scatterer.scatterer.estimators.items():
+                for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
+                        enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                                est_scatterer.temporary_scatterer_estimator_list)):
+                    gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=RuntimeWarning)
+                        est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(
+                            gt_param.grid)
+                        est_param_data = copy.copy(est_param.data)
+                        est_param_data[(estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == False)] = np.nan
+                        est_param_mean = np.nan_to_num(np.nanmean(est_param_data, axis=(0, 1)))
 
-                    gt_param_data = copy.copy(gt_param.data)
-                    if kwargs['mask']:
-                        gt_param_data[kwargs['mask'][ind].data == False] = np.nan
-                        # gt_param[estimator_temporary_scatterer.scatterer.mask.data == False] = np.nan
-                    gt_param_mean = np.nan_to_num(np.nanmean(gt_param_data, axis=(0, 1)))
+                        gt_param_data = copy.copy(gt_param.data)
+                        if kwargs['mask']:
+                            gt_param_data[kwargs['mask'][ind].data == False] = np.nan
+                            # gt_param[estimator_temporary_scatterer.scatterer.mask.data == False] = np.nan
+                        gt_param_mean = np.nan_to_num(np.nanmean(gt_param_data, axis=(0, 1)))
 
-                fig, ax = plt.subplots()
-                ax.set_title('{} {} {}'.format(dynamic_scatterer_name, 'extinction', ind), fontsize=16)
-                ax.plot(est_param_mean, estimator_temporary_scatterer.scatterer.extinction.grid.z, label='Estimated')
-                ax.plot(gt_param_mean, gt_param.grid.z, label='True')
-                ax.legend()
-                ax.set_ylabel('Altitude [km]', fontsize=14)
-                self.tf_writer.add_figure(
-                    tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction', ind),
-                    figure=fig,
-                    global_step=self.optimizer.iteration
-                )
+                        fig, ax = plt.subplots()
+                        ax.set_title('{} {} {}'.format(dynamic_scatterer_name, parameter_name, ind), fontsize=16)
+                        ax.plot(est_param_mean, est_param.grid.z, label='Estimated')
+                        ax.plot(gt_param_mean, gt_param.grid.z, label='True')
+                        ax.legend()
+                        ax.set_ylabel('Altitude [km]', fontsize=14)
+                        self.tf_writer.add_figure(
+                            tag=kwargs['title'].format(dynamic_scatterer_name, parameter_name, ind),
+                            figure=fig,
+                            global_step=self.optimizer.iteration
+                        )
 
 
     def scatter_plot_cbfn(self, kwargs):
@@ -1669,39 +2030,42 @@ class DynamicSummaryWriter(object):
         """
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
-            for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
-                    enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
-                                  est_scatterer.get_temporary_scatterer_list())):
+            parm_scatterer = est_scatterer.temporary_scatterer_estimator_list[0]
+            for parameter_name, parameter in parm_scatterer.scatterer.estimators.items():
+                for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
+                        enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                                      est_scatterer.temporary_scatterer_estimator_list)):
 
-                gt_param = gt_temporary_scatterer.scatterer.extinction
+                    gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
+                    est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(
+                        gt_param.grid)
+                    est_param_data = copy.copy(est_param.data)
+                    est_param_data = est_param_data[
+                        (estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == True)].ravel()
 
-                est_param_data = copy.copy(estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data)
-                est_param_data = est_param_data[
-                    (estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == True)].ravel()
+                    gt_param_data = copy.copy(gt_param.data)
+                    gt_param_data = gt_param_data[
+                        (estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == True)].ravel()
 
-                gt_param_data = copy.copy(gt_param.data)
-                gt_param_data = gt_param_data[
-                    (estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == True)].ravel()
+                    rho = np.corrcoef(est_param_data, gt_param_data)[1, 0]
+                    num_params = gt_param_data.size
+                    rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
+                    max_val = max(gt_param_data.max(), est_param_data.max())
+                    fig, ax = plt.subplots()
+                    ax.set_title(r'{} {}{}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(dynamic_scatterer_name, 'extinction', ind, 100 * kwargs['percent'], rho),
+                                 fontsize=16)
+                    ax.scatter(gt_param_data[rand_ind], est_param_data[rand_ind], facecolors='none', edgecolors='b')
+                    ax.set_xlim([0, 1.1*max_val])
+                    ax.set_ylim([0, 1.1*max_val])
+                    ax.plot(ax.get_xlim(), ax.get_ylim(), c='r', ls='--')
+                    ax.set_ylabel('Estimated', fontsize=14)
+                    ax.set_xlabel('True', fontsize=14)
 
-                rho = np.corrcoef(est_param_data, gt_param_data)[1, 0]
-                num_params = gt_param_data.size
-                rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
-                max_val = max(gt_param_data.max(), est_param_data.max())
-                fig, ax = plt.subplots()
-                ax.set_title(r'{} {}{}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(dynamic_scatterer_name, 'extinction', ind, 100 * kwargs['percent'], rho),
-                             fontsize=16)
-                ax.scatter(gt_param_data[rand_ind], est_param_data[rand_ind], facecolors='none', edgecolors='b')
-                ax.set_xlim([0, 1.1*max_val])
-                ax.set_ylim([0, 1.1*max_val])
-                ax.plot(ax.get_xlim(), ax.get_ylim(), c='r', ls='--')
-                ax.set_ylabel('Estimated', fontsize=14)
-                ax.set_xlabel('True', fontsize=14)
-
-                self.tf_writer.add_figure(
-                    tag=kwargs['title'].format(dynamic_scatterer_name, 'extinction', ind),
-                    figure=fig,
-                    global_step=self.optimizer.iteration
-                )
+                    self.tf_writer.add_figure(
+                        tag=kwargs['title'].format(dynamic_scatterer_name, parameter_name, ind),
+                        figure=fig,
+                        global_step=self.optimizer.iteration
+                    )
 
     def write_image_list(self, global_step, images, titles, vmax=None):
         """

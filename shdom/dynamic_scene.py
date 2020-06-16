@@ -1095,9 +1095,6 @@ class DynamicMediumEstimator(object):
             self._num_mediums += 1
             self._time_list.append(time)
 
-
-
-
     def get_dynamic_medium(self):
         return self._dynamic_medium_estimator
 
@@ -1113,8 +1110,10 @@ class DynamicMediumEstimator(object):
 
         for scatterer_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, dynamic_solver.solver_list, measurements, resolutions):
             grad_output = scatterer_estimator.compute_gradient(shdom.RteSolverArray([rte_solver]),measurement,n_jobs)
-            data_gradient.extend(grad_output[0] / measurement.images.size) #unit less grad
+            data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             data_loss += (grad_output[1] / measurement.images.size) #unit less loss
+            # data_gradient.extend(grad_output[0] / len(measurements) /  )  # unit less grad
+            # data_loss += (grad_output[1])  # unit less loss
             image = grad_output[2]
             images.append(image.reshape(resolution, order='F'))
         loss.append(data_loss / len(measurements))
@@ -1123,6 +1122,7 @@ class DynamicMediumEstimator(object):
             loss.append(regularization_loss)
             state_gradient = np.asarray(data_gradient) + regularization_grad
         else:
+            loss.append(0)
             state_gradient = np.asarray(data_gradient)
 
         return state_gradient, loss, images
@@ -1139,17 +1139,25 @@ class DynamicMediumEstimator(object):
 
             estimated_parameter_stack = []
             for scatterer_estimator in self._dynamic_medium_estimator:
+                grid_size = scatterer_estimator.grid.nx * scatterer_estimator.grid.ny * scatterer_estimator.grid.nz
                 estimated_parameter_stack.append(scatterer_estimator.get_state())
+
+
             dynamic_estimated_parameter = np.stack(estimated_parameter_stack, axis=1)
             grad = np.zeros_like(dynamic_estimated_parameter)
             if regularization_type == 'l2':
                 grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])
                 grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1])
-                grad = np.reshape(grad,(-1,), order='F') / dynamic_estimated_parameter.shape[0] \
+                # grad = np.reshape(grad,(-1,), order='F') / dynamic_estimated_parameter.shape[0] \
+                #        / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
+
+                grad = np.reshape(grad,(-1,), order='F') / grid_size\
                        / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
 
                 loss = np.sum((dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])**2)
-                loss /= (dynamic_estimated_parameter.shape[0] * (dynamic_estimated_parameter.shape[1]-1) * param_typical_avg**2)
+                # loss /= (dynamic_estimated_parameter.shape[0] * (dynamic_estimated_parameter.shape[1]-1) * param_typical_avg**2)
+                loss /= (dynamic_estimated_parameter.shape[1]-1) * param_typical_avg**2
+
             else:
                 NotImplemented()
         return regularization_const * loss, regularization_const * grad #unit less grad
@@ -1625,21 +1633,21 @@ class DynamicSummaryWriter(object):
         }
         self.add_callback_fn(self.loss_cbfn, kwargs)
 
-    def monitor_time_smoothness(self, ckpt_period=-1):
-        """
-        Monitor the time smoothness.
-
-        Parameters
-        ----------
-        ckpt_period: float
-           time [seconds] between updates. setting ckpt_period=-1 will log at every iteration.
-        """
-        kwargs = {
-            'ckpt_period': ckpt_period,
-            'ckpt_time': time.time(),
-            'title': 'time_smoothness'
-        }
-        self.add_callback_fn(self.time_smoothness_cbfn, kwargs)
+    # def monitor_time_smoothness(self, ckpt_period=-1):
+    #     """
+    #     Monitor the time smoothness.
+    #
+    #     Parameters
+    #     ----------
+    #     ckpt_period: float
+    #        time [seconds] between updates. setting ckpt_period=-1 will log at every iteration.
+    #     """
+    #     kwargs = {
+    #         'ckpt_period': ckpt_period,
+    #         'ckpt_time': time.time(),
+    #         'title': 'time_smoothness'
+    #     }
+    #     self.add_callback_fn(self.time_smoothness_cbfn, kwargs)
 
     def save_checkpoints(self, ckpt_period=-1):
         """
@@ -1857,25 +1865,25 @@ class DynamicSummaryWriter(object):
             self.tf_writer.add_scalar(kwargs['Data term loss'], self.optimizer.loss, self.optimizer.iteration)
 
 
-    def time_smoothness_cbfn(self, kwargs):
-        """
-        Callback function that is called (every optimizer iteration) for loss monitoring.
-
-        Parameters
-        ----------
-        kwargs: dict,
-            keyword arguments
-        """
-        extinctions=[]
-        for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
-            est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
-            for estimator_temporary_scatterer in est_scatterer.get_temporary_scatterer_list():
-                extinctions.append(estimator_temporary_scatterer.scatterer.extinction.data)
-        err=0
-        for extinction_i in extinctions:
-            for extinction_j in extinctions:
-                err += np.linalg.norm((extinction_i - extinction_j).reshape(-1, 1), ord=1)
-        self.tf_writer.add_scalar(kwargs['title'], err, self.optimizer.iteration)
+    # def time_smoothness_cbfn(self, kwargs):
+    #     """
+    #     Callback function that is called (every optimizer iteration) for loss monitoring.
+    #
+    #     Parameters
+    #     ----------
+    #     kwargs: dict,
+    #         keyword arguments
+    #     """
+    #     extinctions=[]
+    #     for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
+    #         est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
+    #         for estimator_temporary_scatterer in est_scatterer.get_temporary_scatterer_list():
+    #             extinctions.append(estimator_temporary_scatterer.scatterer.extinction.data)
+    #     err=0
+    #     for extinction_i in extinctions:
+    #         for extinction_j in extinctions:
+    #             err += np.linalg.norm((extinction_i - extinction_j).reshape(-1, 1), ord=1)
+    #     self.tf_writer.add_scalar(kwargs['title'], err, self.optimizer.iteration)
 
     def state_cbfn(self, kwargs=None):
         """

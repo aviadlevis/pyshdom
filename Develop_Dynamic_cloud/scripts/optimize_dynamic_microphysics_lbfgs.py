@@ -115,8 +115,15 @@ class OptimizationScript(ExtinctionOptimizationScript):
 
         # Find a cloud mask for non-cloudy grid points
         self.thr = 1e-6
+
         if self.args.use_forward_mask:
             mask_list = ground_truth.get_mask(threshold=self.thr)
+            show_mask = 1
+            if show_mask:
+                a = (mask_list[0].data).astype(int)
+                print(np.sum(a))
+                shdom.cloud_plot(a)
+
         else:
             dynamic_carver = shdom.DynamicSpaceCarver(measurements)
             mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.75,
@@ -232,9 +239,9 @@ class OptimizationScript(ExtinctionOptimizationScript):
         if self.args.log is not None:
             log_dir = os.path.join(self.args.input_dir, 'logs', self.args.log + '-' + time.strftime("%d-%b-%Y-%H:%M:%S"))
             writer = shdom.DynamicSummaryWriter(log_dir)
-            writer.save_checkpoints(ckpt_period=20 * 60)
+            writer.save_checkpoints()
             writer.monitor_loss()
-            writer.monitor_images(measurements=measurements, ckpt_period=5 * 60)
+            writer.monitor_images(measurements=measurements)
 
 
             # Compare estimator to ground-truth

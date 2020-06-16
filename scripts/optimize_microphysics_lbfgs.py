@@ -212,6 +212,7 @@ class OptimizationScript(ExtinctionOptimizationScript):
             writer = shdom.SummaryWriter(log_dir)
             writer.save_checkpoints(ckpt_period=20 * 60)
             writer.monitor_loss()
+            writer.monitor_images(measurements=measurements, ckpt_period=5 * 60)
 
             # Compare estimator to ground-truth
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)

@@ -228,8 +228,8 @@ class OptimizationScript(object):
             mask = ground_truth.get_mask(threshold=0.001)
         else:
             carver = shdom.SpaceCarver(measurements)
-            mask = carver.carve(grid, agreement=0.7, thresholds=self.args.radiance_threshold)
-            show_mask = 0
+            mask = carver.carve(grid, agreement=0.75, thresholds=self.args.radiance_threshold)
+            show_mask = 1
             if show_mask:
                 a = (mask.data).astype(int)
                 b = ((ground_truth.get_mask(threshold=0.001).data)).astype(int)

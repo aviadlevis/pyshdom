@@ -222,7 +222,7 @@ class OptimizationScript(object):
             mask_list = ground_truth.get_mask(threshold=0.000001)
         else:
             dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-            mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.75,
+            mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.9,
                                 time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
                                 vx_max = 5, vy_max=0, gt_velocity = cloud_velocity)
             show_mask=1
@@ -286,7 +286,7 @@ class OptimizationScript(object):
             writer.monitor_loss()
             writer.monitor_shdom_iterations()
             writer.monitor_images(measurements=measurements, ckpt_period=5 * 60)
-            writer.monitor_time_smoothness()
+            # writer.monitor_time_smoothness()
 
             # Compare estimator to ground-truth
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)

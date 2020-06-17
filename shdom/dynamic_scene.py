@@ -870,7 +870,7 @@ class Homogeneous(shdom.CloudGenerator):
         if grid_list is None:
             grid_list = self.get_grid()
 
-        reff = self.args.lwc
+        reff = self.args.reff
         reff_list = []
 
         if reff is not None:
@@ -901,7 +901,7 @@ class Homogeneous(shdom.CloudGenerator):
         if grid_list is None:
             grid_list = self.get_grid()
 
-        veff = self.args.lwc
+        veff = self.args.veff
         veff_list = []
 
         if veff is not None:
@@ -1108,8 +1108,8 @@ class DynamicMediumEstimator(object):
         split_indices = np.cumsum(measurements.camera.projection.npix[:-1])
         measurements = measurements.split(split_indices)
 
-        for scatterer_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, dynamic_solver.solver_list, measurements, resolutions):
-            grad_output = scatterer_estimator.compute_gradient(shdom.RteSolverArray([rte_solver]),measurement,n_jobs)
+        for medium_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, dynamic_solver.solver_list, measurements, resolutions):
+            grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray([rte_solver]),measurement,n_jobs)
             data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             data_loss += (grad_output[1] / measurement.images.size) #unit less loss
             # data_gradient.extend(grad_output[0] / len(measurements) /  )  # unit less grad
@@ -1142,21 +1142,24 @@ class DynamicMediumEstimator(object):
                 grid_size = scatterer_estimator.grid.nx * scatterer_estimator.grid.ny * scatterer_estimator.grid.nz
                 estimated_parameter_stack.append(scatterer_estimator.get_state())
 
+            grad = np.empty(shape=(0), dtype=np.float64)
+            loss = 0
 
             dynamic_estimated_parameter = np.stack(estimated_parameter_stack, axis=1)
-            grad = np.zeros_like(dynamic_estimated_parameter)
+            curr_grad = np.zeros_like(dynamic_estimated_parameter)
             if regularization_type == 'l2':
-                grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])
-                grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1])
-                # grad = np.reshape(grad,(-1,), order='F') / dynamic_estimated_parameter.shape[0] \
+                curr_grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])
+                curr_grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1])
+                # curr_grad = np.reshape(curr_grad,(-1,), order='F') / dynamic_estimated_parameter.shape[0] \
                 #        / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
 
-                grad = np.reshape(grad,(-1,), order='F') / grid_size\
-                       / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
+                norm_const = 1 / grid_size / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
 
-                loss = np.sum((dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])**2)
-                # loss /= (dynamic_estimated_parameter.shape[0] * (dynamic_estimated_parameter.shape[1]-1) * param_typical_avg**2)
-                loss /= (dynamic_estimated_parameter.shape[1]-1) * param_typical_avg**2
+                curr_grad = np.reshape(curr_grad,(-1,), order='F') * norm_const
+                grad = np.concatenate((grad,curr_grad))
+
+                curr_loss = np.sum((dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])**2) / norm_const
+                loss += curr_loss
 
             else:
                 NotImplemented()
@@ -2002,17 +2005,25 @@ class DynamicSummaryWriter(object):
                     gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", category=RuntimeWarning)
-                        est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(
-                            gt_param.grid)
-                        est_param_data = copy.copy(est_param.data)
-                        est_param_data[(estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == False)] = np.nan
-                        est_param_mean = np.nan_to_num(np.nanmean(est_param_data, axis=(0, 1)))
+                        if parameter.type == 'Homogeneous' or parameter.type == '1D':
+                            est_param = parameter
+                            est_param_mean = parameter.data
+                        else:
+                            est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(
+                                gt_param.grid)
+                            est_param_data = copy.copy(est_param.data)
+                            est_param_data[(estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == False)] = np.nan
+                            est_param_mean = np.nan_to_num(np.nanmean(est_param_data, axis=(0, 1)))
+                        if gt_param.type == 'Homogeneous' or gt_param.type == '1D':
+                                gt_param = gt_param
+                                gt_param_mean = gt_param.data
+                        else:
 
-                        gt_param_data = copy.copy(gt_param.data)
-                        if kwargs['mask']:
-                            gt_param_data[kwargs['mask'][ind].data == False] = np.nan
-                            # gt_param[estimator_temporary_scatterer.scatterer.mask.data == False] = np.nan
-                        gt_param_mean = np.nan_to_num(np.nanmean(gt_param_data, axis=(0, 1)))
+                            gt_param_data = copy.copy(gt_param.data)
+                            if kwargs['mask']:
+                                gt_param_data[kwargs['mask'][ind].data == False] = np.nan
+                                # gt_param[estimator_temporary_scatterer.scatterer.mask.data == False] = np.nan
+                            gt_param_mean = np.nan_to_num(np.nanmean(gt_param_data, axis=(0, 1)))
 
                         fig, ax = plt.subplots()
                         ax.set_title('{} {} {}'.format(dynamic_scatterer_name, parameter_name, ind), fontsize=16)

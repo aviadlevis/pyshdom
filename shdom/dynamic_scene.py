@@ -1986,8 +1986,8 @@ class DynamicSummaryWriter(object):
                     gt_param_mean += gt_param.data.mean()
                     est_param_mean += est_param.data.mean()
 
-                gt_param_mean = gt_param_mean.mean()
-                est_param_mean = est_param_mean.mean()
+                gt_param_mean /= len(est_scatterer.temporary_scatterer_estimator_list)
+                est_param_mean /= len(est_scatterer.temporary_scatterer_estimator_list)
                 self.tf_writer.add_scalars(
                     main_tag=kwargs['title'].format(dynamic_scatterer_name, parameter_name),
                     tag_scalar_dict={'estimated': est_param_mean, 'true': gt_param_mean},

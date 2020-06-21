@@ -108,7 +108,10 @@ class OptimizationScript(ExtinctionOptimizationScript):
 
         # Set cloud's velocity
         if self.args.use_forward_cloud_velocity:
-            cloud_velocity = ground_truth.get_velocity()
+            if ground_truth.num_scatterers > 1:
+                cloud_velocity = ground_truth.get_velocity()
+            else:
+                cloud_velocity = [[0,0,0]]
             cloud_velocity = cloud_velocity[0]*1000 #km/sec to m/sec
         else:
             cloud_velocity = None
@@ -118,7 +121,7 @@ class OptimizationScript(ExtinctionOptimizationScript):
 
         if self.args.use_forward_mask:
             mask_list = ground_truth.get_mask(threshold=self.thr)
-            show_mask = 1
+            show_mask = 0
             if show_mask:
                 a = (mask_list[0].data).astype(int)
                 print(np.sum(a))
@@ -188,7 +191,7 @@ class OptimizationScript(ExtinctionOptimizationScript):
         # Create a medium estimator object (optional Rayleigh scattering)
 
         air = self.air_generator.get_scatterer(cloud_estimator.wavelength)
-        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air.resample(grid), cloud_velocity,
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air, cloud_velocity,
                                                         loss_type=self.args.loss_type,
                                                         stokes_weights=self.args.stokes_weights
                                                         )
@@ -250,6 +253,7 @@ class OptimizationScript(ExtinctionOptimizationScript):
             writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.8)
             writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=self.thr))
 
+            self.save_args(log_dir)
         return writer
 
 

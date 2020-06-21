@@ -472,7 +472,6 @@ class DynamicMedium(object):
     def get_dynamic_scatterer(self):
         return self._dynamic_scatterer
 
-
     def get_dynamic_medium(self):
         return self._dynamic_medium
 
@@ -547,9 +546,8 @@ class DynamicMedium(object):
         if self.num_mediums == 0:
             return None
         if self.num_mediums == 1:
-            return self._dynamic_medium[0]
-        else:
             return self._dynamic_medium
+
 
     @dynamic_medium.setter
     def dynamic_medium(self, val):
@@ -1110,13 +1108,15 @@ class DynamicMediumEstimator(object):
 
         for medium_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, dynamic_solver.solver_list, measurements, resolutions):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray([rte_solver]),measurement,n_jobs)
-            data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
-            data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            # data_gradient.extend(grad_output[0] / len(measurements) /  )  # unit less grad
-            # data_loss += (grad_output[1])  # unit less loss
+            # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
+            # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
+            data_gradient.extend(grad_output[0])
+            data_loss += (grad_output[1])
             image = grad_output[2]
             images.append(image.reshape(resolution, order='F'))
-        loss.append(data_loss / len(measurements))
+        # loss.append(data_loss / len(measurements))#unit less loss
+        loss.append(data_loss)
+
         if regularization_const != 0:
             regularization_loss, regularization_grad = self.compute_gradient_regularization(regularization_const)
             loss.append(regularization_loss)
@@ -1129,17 +1129,25 @@ class DynamicMediumEstimator(object):
 
     def compute_gradient_regularization(self,regularization_const, regularization_type='l2'):
         for param_name, param in self.dynamic_scatterer_estimator.temporary_scatterer_estimator_list[0].scatterer.estimators.items():
+            # typical_avg = {
+            #     'extinction': 1,
+            #     'lwc': 0.01,
+            #     'reff': 10,
+            #     'veff': 0.01
+            # }
             typical_avg = {
                 'extinction': 1,
-                'lwc': 0.01,
-                'reff': 10,
-                'veff': 0.01
+                'lwc':  1,
+                'reff': 1,
+                'veff': 1
             }
             param_typical_avg = typical_avg[param_name]
 
             estimated_parameter_stack = []
+            # grid_size = param.grid.nx * param.grid.ny * param.grid.nz
+            grid_size = 1
+
             for scatterer_estimator in self._dynamic_medium_estimator:
-                grid_size = scatterer_estimator.grid.nx * scatterer_estimator.grid.ny * scatterer_estimator.grid.nz
                 estimated_parameter_stack.append(scatterer_estimator.get_state())
 
             grad = np.empty(shape=(0), dtype=np.float64)
@@ -1148,6 +1156,7 @@ class DynamicMediumEstimator(object):
             dynamic_estimated_parameter = np.stack(estimated_parameter_stack, axis=1)
             curr_grad = np.zeros_like(dynamic_estimated_parameter)
             if regularization_type == 'l2':
+                assert curr_grad.shape[1]>1,'cant calculate gradient for 1 image'
                 curr_grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])
                 curr_grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1])
                 # curr_grad = np.reshape(curr_grad,(-1,), order='F') / dynamic_estimated_parameter.shape[0] \
@@ -1158,12 +1167,12 @@ class DynamicMediumEstimator(object):
                 curr_grad = np.reshape(curr_grad,(-1,), order='F') * norm_const
                 grad = np.concatenate((grad,curr_grad))
 
-                curr_loss = np.sum((dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])**2) / norm_const
+                curr_loss = np.sum((dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])**2) * norm_const
                 loss += curr_loss
 
             else:
                 NotImplemented()
-        return regularization_const * loss, regularization_const * grad #unit less grad
+        return regularization_const * loss, regularization_const * grad
 
     # def scatterer_velocity_estimate(self):
     #     estimated_extinction_stack = []
@@ -2006,8 +2015,9 @@ class DynamicSummaryWriter(object):
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", category=RuntimeWarning)
                         if parameter.type == 'Homogeneous' or parameter.type == '1D':
-                            est_param = parameter
-                            est_param_mean = parameter.data
+                            est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(
+                                gt_param.grid)
+                            est_param_mean = est_param.data
                         else:
                             est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(
                                 gt_param.grid)
@@ -2015,7 +2025,6 @@ class DynamicSummaryWriter(object):
                             est_param_data[(estimator_temporary_scatterer.scatterer.mask.resample(gt_param.grid).data == False)] = np.nan
                             est_param_mean = np.nan_to_num(np.nanmean(est_param_data, axis=(0, 1)))
                         if gt_param.type == 'Homogeneous' or gt_param.type == '1D':
-                                gt_param = gt_param
                                 gt_param_mean = gt_param.data
                         else:
 
@@ -2071,7 +2080,7 @@ class DynamicSummaryWriter(object):
                     rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
                     max_val = max(gt_param_data.max(), est_param_data.max())
                     fig, ax = plt.subplots()
-                    ax.set_title(r'{} {}{}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(dynamic_scatterer_name, 'extinction', ind, 100 * kwargs['percent'], rho),
+                    ax.set_title(r'{} {}{}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(dynamic_scatterer_name, parameter_name, ind, 100 * kwargs['percent'], rho),
                                  fontsize=16)
                     ax.scatter(gt_param_data[rand_ind], est_param_data[rand_ind], facecolors='none', edgecolors='b')
                     ax.set_xlim([0, 1.1*max_val])

@@ -246,6 +246,7 @@ class OptimizationScript(ExtinctionOptimizationScript):
             writer.monitor_loss()
             writer.monitor_images(measurements=measurements)
 
+            writer.monitor_state()
 
             # Compare estimator to ground-truth
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)

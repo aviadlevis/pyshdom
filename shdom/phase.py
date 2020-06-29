@@ -693,7 +693,8 @@ class MiePolydisperse(object):
         self._ssalb = None
         self._nleg = None
         self._maxleg = None
-        self._legendre_table = None 
+        self._legendre_table = None
+        self._wavelength = None
 
     def set_mono_disperse(self, mono_disperse):
         """
@@ -892,12 +893,14 @@ class MiePolydisperse(object):
             self._mono_disperse._pardens, self._mono_disperse._partype, self._mono_disperse._rindex, \
             self._mono_disperse._distflag, self.size_distribution._nretab, self.size_distribution._nvetab, \
             self._maxleg = self.read_table_header(file_path)
-        
+
         self._mono_disperse._wavelencen = core.get_center_wavelen(
             wavelen1=self.mono_disperse._wavelen1, 
             wavelen2=self.mono_disperse._wavelen2
         )
-        
+
+        self._wavelength = self._mono_disperse._wavelencen
+
         self.size_distribution.reff, self.size_distribution.veff, self._extinct, self._ssalb, \
             self._nleg, self.legcoef, table_type = core.read_poly_table(
                 mietabfile=file_path, 
@@ -1077,10 +1080,14 @@ class MiePolydisperse(object):
     
     @property
     def wavelength(self):
-        if self.mono_disperse._wavelencen is None:
+        if self._wavelength is None:
             return None
         else:
-            return round(self.mono_disperse._wavelencen, 3)
+            return round(self._wavelength, 3)
+        # if self.mono_disperse._wavelencen is None:
+        #     return None
+        # else:
+        #     return round(self.mono_disperse._wavelencen, 3)
 
 
 class Rayleigh(object):

@@ -242,7 +242,10 @@ class DynamicScatterer(object):
                     reff=shdom.GridData(grid_reff, scatterer.reff.data).squeeze_dims(),
                     veff=shdom.GridData(grid_veff, scatterer.veff.data).squeeze_dims()
                 )
-                shifted_scatterer.add_mie(scatterer.mie[scatterer.wavelength])
+                if scatterer.num_wavelengths >1:
+                    shifted_scatterer.add_mie(scatterer.mie)
+                else:
+                    shifted_scatterer.add_mie(scatterer.mie[scatterer.wavelength])
                 self._type = 'MicrophysicalScatterer'
             elif isinstance(scatterer,shdom.OpticalScatterer()):
                 grid_extinction = shdom.Grid(x=scatterer.grid.x + scatterer_shift[0], y=scatterer.grid.y +
@@ -446,7 +449,7 @@ class DynamicMedium(object):
             self.set_dynamic_medium(dynamic_scatterer,air)
 
     def set_dynamic_medium(self, dynamic_scatterer, air):
-        assert isinstance(dynamic_scatterer,DynamicScatterer) and isinstance(air,shdom.Scatterer)
+        assert isinstance(dynamic_scatterer,DynamicScatterer) #and (isinstance(air,shdom.Scatterer) or isinstance(air,shdom.MultispectralScatterer))
         self._num_mediums = 0
         self._dynamic_medium = []
         self._time_list = []
@@ -558,9 +561,15 @@ class DynamicMedium(object):
 class DynamicRteSolver(shdom.RteSolverArray):
     def __init__(self, scene_params=None, numerical_params=None):
         super().__init__()
-        self._scene_params = scene_params
-        self._numerical_params = numerical_params
-        self._num_stokes = None
+        if isinstance(scene_params,list):
+            self._scene_params = scene_params
+        else:
+            self._scene_params = [scene_params]
+        if isinstance(scene_params,list):
+            self._numerical_params = numerical_params
+        else:
+            self._numerical_params = [numerical_params]
+        # self._num_stokes = None
         self._dynamic_medium = None
 
     def set_dynamic_medium(self, dynamic_medium):
@@ -571,14 +580,17 @@ class DynamicRteSolver(shdom.RteSolverArray):
             self._wavelength = dynamic_medium.wavelength
         else:
             self._wavelength = [dynamic_medium.wavelength]
+        assert len(self._wavelength)==len(self._scene_params)==len(self._numerical_params)
+        # assert set(self._wavelength)==set([self._scene_params,self._numerical_params.wavelength])
         dynamic_medium_list = dynamic_medium.get_dynamic_medium()
-        for medium in dynamic_medium_list:
-            rte_solver = shdom.RteSolver()
-            if self._scene_params and self._numerical_params:
-                rte_solver.set_scene(self._scene_params)
-                rte_solver.set_numerics(self._numerical_params)
-            rte_solver.set_medium(medium)
-            self.add_dynamic_solver(rte_solver)
+        for scene_params, numerical_params in zip(self._scene_params, self._numerical_params):
+            for medium in dynamic_medium_list:
+                rte_solver = shdom.RteSolver()
+                rte_solver.set_scene(scene_params)
+                rte_solver.set_numerics(numerical_params)
+                rte_solver.set_medium(medium)
+                self.add_dynamic_solver(rte_solver)
+
 
     def replace_dynamic_medium(self, dynamic_medium):
         assert isinstance(dynamic_medium, DynamicMedium) or isinstance(dynamic_medium, DynamicMediumEstimator), ' dynamic_medium type is wrong'
@@ -591,9 +603,6 @@ class DynamicRteSolver(shdom.RteSolverArray):
         dynamic_medium_list = dynamic_medium.get_dynamic_medium()
         for medium, rte_solver  in zip(dynamic_medium_list,self.solver_list):
             rte_solver.set_medium(medium)
-
-
-
 
     def add_dynamic_solver(self, rte_solver):
         """
@@ -621,18 +630,6 @@ class DynamicRteSolver(shdom.RteSolverArray):
                 self._solver_list.append(solver)
                 self._name.append(solver.name)
                 self._num_solvers += 1
-
-    # @property
-    # def scene_params(self):
-    #     return self._scene_params
-    #
-    # @property
-    # def numerical_params(self):
-    #     return self._numerical_params
-
-    # @property
-    # def num_stokes(self):
-    #     return self._num_stokes
 
     @property
     def dynamic_medium(self):
@@ -666,8 +663,10 @@ class DynamicCamera(shdom.Camera):
         assert isinstance(dynamic_solver, DynamicRteSolver)
         images=[]
         # rte_solver_array = dynamic_solver.get_rte_solver_array()
-        for rte_solver, projection in zip(dynamic_solver.solver_list, self.projection.projection_list):
-            images.append(self.sensor.render(rte_solver, projection, n_jobs, verbose))
+        multispectral_solvers_list = np.reshape(dynamic_solver.solver_list, (len(dynamic_solver.wavelength),-1)).tolist()
+        for solver_list in multispectral_solvers_list:
+            for rte_solver, projection in zip(solver_list, self.projection.projection_list):
+                images.append(self.sensor.render(rte_solver, projection, n_jobs, verbose))
         return images
 
 
@@ -676,7 +675,7 @@ class DynamicMeasurements(shdom.Measurements):
         super().__init__(camera=camera, images=images, pixels=pixels, wavelength=wavelength, uncertainties=uncertainties)
         assert (images is None) == (time_list is None),'images and time_list have to be None or not'
         if images is not None and  time_list is not None:
-            assert len(images) == len(time_list), 'images and time_list have to be with the same length'
+            assert len(images) == len(time_list)*len(wavelength), 'images and time_list have to be with the same length'
         self._time_list = time_list
 
     @property
@@ -751,6 +750,197 @@ class Homogeneous(shdom.CloudGenerator):
                             default=[0,0,0],
                             type=np.float32,
                             help='Estimated cloud velocity.')
+        return parser
+
+    def get_grid(self):
+        """
+        Retrieve the scatterer grid.
+
+        Returns
+        -------
+        grid: shdom.Grid
+            A Grid object for this scatterer
+        """
+        time_list = np.asarray(self.args.time_list).reshape((-1, 1))
+        scatterer_velocity_list = np.asarray(self.args.cloud_velocity).reshape((3, -1))
+        assert scatterer_velocity_list.shape[0] == 3 and \
+               (scatterer_velocity_list.shape[1] == time_list.shape[0] or scatterer_velocity_list.shape[1] == 1), \
+            'time_list, scatterer_velocity_list have wrong dimensions'
+        scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T  # km
+        bb = shdom.BoundingBox(0.0, 0.0, 0.0, self.args.domain_size, self.args.domain_size, self.args.domain_size)
+        grid_list = []
+        for scatterer_shift in scatterer_shifts:
+            grid_list.append(shdom.Grid(bounding_box=bb,
+                x=np.linspace(scatterer_shift[1], self.args.nx+ scatterer_shift[0], self.args.nx),
+                       y=np.linspace(scatterer_shift[1], self.args.ny + scatterer_shift[1], self.args.ny),
+                       z=np.linspace(0.1 + scatterer_shift[2], self.args.nz + scatterer_shift[2], self.args.nz)))
+            # grid_list.append(shdom.Grid(bounding_box=bb, nx=self.args.nx + scatterer_shift[0], ny=self.args.ny+ scatterer_shift[1], nz=self.args.nz+ scatterer_shift[2]))
+        return grid_list
+
+    def get_extinction(self, wavelength=None, grid_list=None):
+        """
+        Retrieve the optical extinction at a single wavelength on a grid.
+
+        Parameters
+        ----------
+        wavelength: float
+            Wavelength in microns. A Mie table at this wavelength should be added prior (see add_mie method).
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        extinction: shdom.GridData
+            A GridData object containing the optical extinction on a grid
+
+        Notes
+        -----
+        If the LWC is specified then the extinction is derived using (lwc,reff,veff). If not the extinction needs to be directly specified.
+        The input wavelength is rounded to three decimals.
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+        extinction =[]
+        if self.args.lwc is None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    ext_data = self.args.extinction
+                elif grid.type == '1D':
+                    ext_data = np.full(shape=(grid.nz), fill_value=self.args.extinction, dtype=np.float32)
+                elif grid.type == '3D':
+                    ext_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.extinction, dtype=np.float32)
+                extinction.append(shdom.GridData(grid, ext_data))
+        else:
+            assert wavelength is not None, 'No wavelength provided'
+            lwc_list = self.get_lwc(grid_list)
+            reff_list = self.get_reff(grid_list)
+            veff_list = self.get_veff(grid_list)
+            for lwc, reff, veff in zip(lwc_list,reff_list,veff_list):
+                extinction.append(self.mie[shdom.float_round(wavelength)].get_extinction(lwc, reff, veff))
+        return extinction
+
+    def get_lwc(self, grid_list=None):
+        """
+        Retrieve the liquid water content.
+
+        Parameters
+        ----------
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        lwc: shdom.GridData
+            A GridData object containing liquid water content (g/m^3) on a 3D grid.
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+
+        lwc = self.args.lwc
+        lwc_list =[]
+
+        if lwc is not None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    lwc_data = self.args.lwc
+                elif grid.type == '1D':
+                    lwc_data = np.full(shape=(grid.nz), fill_value=self.args.lwc, dtype=np.float32)
+                elif grid.type == '3D':
+                    lwc_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.lwc, dtype=np.float32)
+                lwc_list.append(shdom.GridData(grid, lwc_data))
+        return lwc_list
+
+    def get_reff(self, grid_list=None):
+        """
+        Retrieve the effective radius on a grid.
+
+        Parameters
+        ----------
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        reff: shdom.GridData
+            A GridData object containing the effective radius [microns] on a grid
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+
+        reff = self.args.reff
+        reff_list = []
+
+        if reff is not None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    reff_data = self.args.reff
+                elif grid.type == '1D':
+                    reff_data = np.full(shape=(grid.nz), fill_value=self.args.reff, dtype=np.float32)
+                elif grid.type == '3D':
+                    reff_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.reff, dtype=np.float32)
+                reff_list.append(shdom.GridData(grid, reff_data))
+        return reff_list
+
+    def get_veff(self, grid_list=None):
+        """
+        Retrieve the effective radius on a grid.
+
+        Parameters
+        ----------
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        reff: shdom.GridData
+            A GridData object containing the effective radius [microns] on a grid
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+
+        veff = self.args.veff
+        veff_list = []
+
+        if veff is not None:
+            for grid in grid_list:
+                if grid.type == 'Homogeneous':
+                    veff_data = self.args.veff
+                elif grid.type == '1D':
+                    veff_data = np.full(shape=(grid.nz), fill_value=self.args.veff, dtype=np.float32)
+                elif grid.type == '3D':
+                    veff_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.veff, dtype=np.float32)
+                veff_list.append(shdom.GridData(grid, veff_data))
+        return veff_list
+
+
+class Static(shdom.CloudGenerator):
+    """
+    Define a Dynamic Medium from Static Medium.
+
+    Parameters
+    ----------
+    args: arguments from argparse.ArgumentParser()
+        Arguments required for this generator.
+    """
+    def __init__(self, args):
+        super(Static, self).__init__(args)
+
+
+    @classmethod
+    def update_parser(self, parser):
+        """
+        Update the argument parser with parameters relevant to this generator.
+
+        Parameters
+        ----------
+        parser: argparse.ArgumentParser()
+            The main parser to update.
+
+        Returns
+        -------
+        parser: argparse.ArgumentParser()
+            The updated parser.
+        """
         return parser
 
     def get_grid(self):
@@ -1108,10 +1298,10 @@ class DynamicMediumEstimator(object):
 
         for medium_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, dynamic_solver.solver_list, measurements, resolutions):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray([rte_solver]),measurement,n_jobs)
-            # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
-            # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            data_gradient.extend(grad_output[0])
-            data_loss += (grad_output[1])
+            data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
+            data_loss += (grad_output[1] / measurement.images.size) #unit less loss
+            # data_gradient.extend(grad_output[0])
+            # data_loss += (grad_output[1])
             image = grad_output[2]
             images.append(image.reshape(resolution, order='F'))
         # loss.append(data_loss / len(measurements))#unit less loss
@@ -1128,19 +1318,20 @@ class DynamicMediumEstimator(object):
         return state_gradient, loss, images
 
     def compute_gradient_regularization(self,regularization_const, regularization_type='l2'):
-        for param_name, param in self.dynamic_scatterer_estimator.temporary_scatterer_estimator_list[0].scatterer.estimators.items():
-            # typical_avg = {
-            #     'extinction': 1,
-            #     'lwc': 0.01,
-            #     'reff': 10,
-            #     'veff': 0.01
-            # }
+        loss = 0
+        for param_name, _ in self.dynamic_scatterer_estimator.temporary_scatterer_estimator_list[0].scatterer.estimators.items():
             typical_avg = {
                 'extinction': 1,
-                'lwc':  1,
-                'reff': 1,
-                'veff': 1
+                'lwc': 0.01,
+                'reff': 10,
+                'veff': 0.01
             }
+            # typical_avg = {
+            #     'extinction': 1,
+            #     'lwc':  1,
+            #     'reff': 1,
+            #     'veff': 1
+            # }
             param_typical_avg = typical_avg[param_name]
 
             estimated_parameter_stack = []
@@ -1151,7 +1342,7 @@ class DynamicMediumEstimator(object):
                 estimated_parameter_stack.append(scatterer_estimator.get_state())
 
             grad = np.empty(shape=(0), dtype=np.float64)
-            loss = 0
+
 
             dynamic_estimated_parameter = np.stack(estimated_parameter_stack, axis=1)
             curr_grad = np.zeros_like(dynamic_estimated_parameter)

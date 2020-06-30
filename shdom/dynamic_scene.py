@@ -602,7 +602,12 @@ class DynamicRteSolver(shdom.RteSolverArray):
         #                                         (len(self.wavelength), -1)).tolist()
         # for solver_list in multispectral_solvers_list:
         #     for rte_solver, projection in zip(solver_list, self.projection.projection_list):
-        for medium, rte_solver  in zip(dynamic_medium_list,self.solver_list):
+        multispectral_solvers_list = np.reshape(self.solver_list, (len(self.wavelength),-1)).T.tolist()
+        assert len(multispectral_solvers_list)==len(dynamic_medium_list)
+        for solver_list,medium in zip(multispectral_solvers_list,dynamic_medium_list):
+            # for projection in self.projection.projection_list:
+            rte_solver = shdom.RteSolverArray(solver_list)
+        # for medium, rte_solver  in zip(dynamic_medium_list,self.solver_list):
             rte_solver.set_medium(medium)
 
     def add_dynamic_solver(self, rte_solver):
@@ -1181,15 +1186,20 @@ class DynamicScattererEstimator(object):
         elif self._type == 'MicrophysicalScatterer':
             # Mie scattering for water droplets
             mie = shdom.MiePolydisperse()
-            mie_table_path = 'mie_tables/polydisperse/Water_{}nm.scat'.format(shdom.int_round(wavelength))
-            mie.read_table(file_path=mie_table_path)
+            # mie_table_path = 'mie_tables/polydisperse/Water_{}nm.scat'.format(shdom.int_round(wavelength))
+            mie_list = []
+            for wl in wavelength:
+                mie_table_path = 'mie_tables/polydisperse/Water_{}nm.scat'.format(shdom.int_round(wl))
+                mie = shdom.MiePolydisperse()
+                mie.read_table(file_path=mie_table_path)
+                mie_list.append(mie)
             # assert len(dynamic_extinction.dynamic_grid_data) == len(dynamic_albedo) == len(dynamic_phase) == len(
             #     time_list), \
             #     'All attributes should have the same length'
             self._temporary_scatterer_estimator_list = []
             for lwc, reff, veff, time in \
                     zip(dynamic_lwc, dynamic_reff, dynamic_veff, time_list):
-                scatterer_estimator = shdom.MicrophysicalScattererEstimator(mie, lwc, reff, veff)
+                scatterer_estimator = shdom.MicrophysicalScattererEstimator(mie_list, lwc, reff, veff)
                 self._temporary_scatterer_estimator_list.append(
                     TemporaryScattererEstimator(scatterer_estimator, time))
                 self._time_list.append(time)
@@ -1299,15 +1309,22 @@ class DynamicMediumEstimator(object):
         resolutions = measurements.camera.projection.resolution
         split_indices = np.cumsum(measurements.camera.projection.npix[:-1])
         measurements = measurements.split(split_indices)
+        # if len(self.wavelength)>2:
+        num_channels = len(self.wavelength)
+        multichannel = num_channels > 1
+        multispectral_solvers_list = np.reshape(dynamic_solver.solver_list, (len(self.wavelength), -1)).T.tolist()
 
-        for medium_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, dynamic_solver.solver_list, measurements, resolutions):
-            grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray([rte_solver]),measurement,n_jobs)
+        for medium_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, multispectral_solvers_list, measurements, resolutions):
+            grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray(rte_solver),measurement,n_jobs)
             data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             data_loss += (grad_output[1] / measurement.images.size) #unit less loss
             # data_gradient.extend(grad_output[0])
             # data_loss += (grad_output[1])
             image = grad_output[2]
-            images.append(image.reshape(resolution, order='F'))
+            new_shape = resolution.copy()
+            if multichannel:
+                new_shape.append(num_channels)
+            images.append(image.reshape(new_shape, order='F'))
         # loss.append(data_loss / len(measurements))#unit less loss
         loss.append(data_loss)
 

@@ -878,7 +878,7 @@ class Measurements(object):
         self._pixels = pixels
         self._num_channels = pixels.shape[-1] if pixels is not None else None
         if self.num_channels is not None and self.num_channels > 1:
-            assert self.num_channels == len(self._wavelength), 'Number of channels = {} differs from len(wavelength)={}'.format(num_channels, len(self._wavelength))
+            assert self.num_channels == len(self._wavelength), 'Number of channels = {} differs from len(wavelength)={}'.format(self.num_channels, len(self._wavelength))
 
     def images_to_pixels(self, images):
         """
@@ -994,7 +994,7 @@ class Measurements(object):
 
         pixels = np.array_split(self.pixels, n_parts)
         measurements = [shdom.Measurements(
-            camera=shdom.Camera(self.camera.sensor, projection),
+            camera=shdom.Camera(self.camera.sensor, projection),wavelength=self.wavelength,
             pixels=pixel, images=image) for projection, pixel, image in zip(projections, pixels, self.images)
         ]
         return measurements

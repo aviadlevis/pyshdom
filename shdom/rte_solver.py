@@ -1226,6 +1226,7 @@ class RteSolverArray(object):
                 self._name.append(solver.name)
                 self._wavelength.append(solver.wavelength)
                 self._num_solvers += 1
+        self._wavelength = list(set(self._wavelength))
       
     def init_solution(self):
         """

@@ -15,9 +15,6 @@ import tensorboardX as tb
 import matplotlib.pyplot as plt
 
 
-
-
-
 def save_dynamic_forward_model(directory, dynamic_medium, dynamic_solver, measurements):
     """
     Save the forward model parameters for reconstruction.
@@ -88,7 +85,7 @@ def load_dynamic_forward_model(directory):
     solver = DynamicRteSolver()
     if os.path.exists(solver_path):
         solver.load_params(path=os.path.join(directory, 'solver_parameters'))
-
+    # solver.set_dynamic_medium(medium)
     return medium, solver, measurements
 
 
@@ -601,6 +598,10 @@ class DynamicRteSolver(shdom.RteSolverArray):
         else:
             self._wavelength = [dynamic_medium.wavelength]
         dynamic_medium_list = dynamic_medium.get_dynamic_medium()
+        # multispectral_solvers_list = np.reshape(self.solver_list,
+        #                                         (len(self.wavelength), -1)).tolist()
+        # for solver_list in multispectral_solvers_list:
+        #     for rte_solver, projection in zip(solver_list, self.projection.projection_list):
         for medium, rte_solver  in zip(dynamic_medium_list,self.solver_list):
             rte_solver.set_medium(medium)
 
@@ -662,11 +663,14 @@ class DynamicCamera(shdom.Camera):
         """
         assert isinstance(dynamic_solver, DynamicRteSolver)
         images=[]
+
         # rte_solver_array = dynamic_solver.get_rte_solver_array()
-        multispectral_solvers_list = np.reshape(dynamic_solver.solver_list, (len(dynamic_solver.wavelength),-1)).tolist()
-        for solver_list in multispectral_solvers_list:
-            for rte_solver, projection in zip(solver_list, self.projection.projection_list):
-                images.append(self.sensor.render(rte_solver, projection, n_jobs, verbose))
+        multispectral_solvers_list = np.reshape(dynamic_solver.solver_list, (len(dynamic_solver.wavelength),-1)).T.tolist()
+        assert len(multispectral_solvers_list)==len(self.projection.projection_list)
+        for solver_list,projection in zip(multispectral_solvers_list,self.projection.projection_list):
+            # for projection in self.projection.projection_list:
+            rte_solver = shdom.RteSolverArray(solver_list)
+            images.append(self.sensor.render(rte_solver, projection, n_jobs, verbose))
         return images
 
 
@@ -675,7 +679,7 @@ class DynamicMeasurements(shdom.Measurements):
         super().__init__(camera=camera, images=images, pixels=pixels, wavelength=wavelength, uncertainties=uncertainties)
         assert (images is None) == (time_list is None),'images and time_list have to be None or not'
         if images is not None and  time_list is not None:
-            assert len(images) == len(time_list)*len(wavelength), 'images and time_list have to be with the same length'
+            assert len(images) == len(time_list), 'images and time_list have to be with the same length'
         self._time_list = time_list
 
     @property

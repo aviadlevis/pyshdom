@@ -196,7 +196,7 @@ class RadianceSensor(Sensor):
         """
         multiview = isinstance(projection, shdom.MultiViewProjection)
         multichannel = num_channels > 1
-        radiance = radiance.T
+        # radiance = radiance.T
         if multichannel:
             radiance = np.array(np.split(radiance, num_channels))
             radiance = radiance.T
@@ -216,7 +216,7 @@ class RadianceSensor(Sensor):
                     for image, resolution in zip(radiance, projection.resolution)
                 ]
         else:
-            new_shape = projection.resolution
+            new_shape = projection.resolution.copy()
             if multichannel:
                 new_shape.append(num_channels)
             radiance = radiance.reshape(new_shape, order='F')

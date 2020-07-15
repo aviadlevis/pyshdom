@@ -13,6 +13,7 @@ import shdom
 import dill as pickle
 import tensorboardX as tb
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 
 def save_dynamic_forward_model(directory, dynamic_medium, dynamic_solver, measurements):
@@ -39,7 +40,8 @@ def save_dynamic_forward_model(directory, dynamic_medium, dynamic_solver, measur
     if not os.path.isdir(directory):
         os.makedirs(directory)
     measurements.save(os.path.join(directory, 'measurements'))
-    dynamic_medium.save(os.path.join(directory, 'ground_truth_dynamic_medium'))
+    if dynamic_medium is not None:
+        dynamic_medium.save(os.path.join(directory, 'ground_truth_dynamic_medium'))
     dynamic_solver.save_params(os.path.join(directory, 'solver_parameters'))
 
 
@@ -585,7 +587,8 @@ class DynamicRteSolver(shdom.RteSolverArray):
                 rte_solver = shdom.RteSolver()
                 rte_solver.set_scene(scene_params)
                 rte_solver.set_numerics(numerical_params)
-                rte_solver.set_medium(medium)
+                if medium is not None:
+                    rte_solver.set_medium(medium)
                 self.add_dynamic_solver(rte_solver)
 
 
@@ -594,15 +597,15 @@ class DynamicRteSolver(shdom.RteSolverArray):
         self._dynamic_medium = dynamic_medium
 
         if isinstance(dynamic_medium.wavelength,list):
-            self._wavelength = dynamic_medium.wavelength
+            wavelength = dynamic_medium.wavelength
         else:
-            self._wavelength = [dynamic_medium.wavelength]
+            wavelength = [dynamic_medium.wavelength]
         dynamic_medium_list = dynamic_medium.get_dynamic_medium()
         # multispectral_solvers_list = np.reshape(self.solver_list,
         #                                         (len(self.wavelength), -1)).tolist()
         # for solver_list in multispectral_solvers_list:
         #     for rte_solver, projection in zip(solver_list, self.projection.projection_list):
-        multispectral_solvers_list = np.reshape(self.solver_list, (len(self.wavelength),-1)).T.tolist()
+        multispectral_solvers_list = np.reshape(self.solver_list, (len(wavelength),-1)).T.tolist()
         assert len(multispectral_solvers_list)==len(dynamic_medium_list)
         for solver_list,medium in zip(multispectral_solvers_list,dynamic_medium_list):
             # for projection in self.projection.projection_list:
@@ -748,7 +751,7 @@ class Homogeneous(shdom.CloudGenerator):
                             type=np.float32,
                             help='(default value: %(default)s) Effective radius [micron]')
         parser.add_argument('--veff',
-                            default=0.1,
+                            default=0.01,
                             type=np.float32,
                             help='(default value: %(default)s) Effective variance')
         parser.add_argument('--time_list',
@@ -760,6 +763,53 @@ class Homogeneous(shdom.CloudGenerator):
                             type=np.float32,
                             help='Estimated cloud velocity.')
         return parser
+
+    def get_grid_from_measurements(self, measurements):
+        """
+        Retrieve the scatterer grid.
+
+        Returns
+        -------
+        grid: shdom.Grid
+            A Grid object for this scatterer
+        """
+        # time_list = measurements.time_list
+        # scatterer_velocity_list = np.asarray(self.args.cloud_velocity).reshape((3, -1))
+        # assert scatterer_velocity_list.shape[0] == 3 and \
+        #        (scatterer_velocity_list.shape[1] == time_list.shape[0] or scatterer_velocity_list.shape[1] == 1), \
+        #     'time_list, scatterer_velocity_list have wrong dimensions'
+        # scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T  # km
+        #
+        x_min = measurements.camera.projection.x.min()
+        x_max = measurements.camera.projection.x.max()
+        y_min = measurements.camera.projection.y.min()
+        y_max = measurements.camera.projection.y.max()
+        z_min = 0
+        z_max = measurements.camera.projection.z.max()
+
+
+        # bb = shdom.BoundingBox(x_min,y_min, z_min, x_max, y_max, z_max)
+        # grid = shdom.Grid(bounding_box=bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
+
+        dx = np.round((x_max - x_min) / self.args.nx, 5)
+        x = np.arange(x_min, x_max, dx)
+
+        dy = np.round((y_max - y_min) / self.args.ny, 5)
+        y = np.arange(y_min, y_max, dy)
+
+        dz = np.round((z_max - z_min) / self.args.nz, 5)
+        z = np.arange(z_min, z_max, dz)
+
+        grid = shdom.Grid(x=x,
+                          y=y, z=z)
+
+        # for scatterer_shift in scatterer_shifts:
+        #     grid_list.append(shdom.Grid(bounding_box=bb,
+        #         x=np.linspace(scatterer_shift[1], self.args.nx+ scatterer_shift[0], self.args.nx),
+        #                y=np.linspace(scatterer_shift[1], self.args.ny + scatterer_shift[1], self.args.ny),
+        #                z=np.linspace(0.1 + scatterer_shift[2], self.args.nz + scatterer_shift[2], self.args.nz)))
+            # grid_list.append(shdom.Grid(bounding_box=bb, nx=self.args.nx + scatterer_shift[0], ny=self.args.ny+ scatterer_shift[1], nz=self.args.nz+ scatterer_shift[2]))
+        return grid
 
     def get_grid(self):
         """
@@ -827,6 +877,85 @@ class Homogeneous(shdom.CloudGenerator):
             for lwc, reff, veff in zip(lwc_list,reff_list,veff_list):
                 extinction.append(self.mie[shdom.float_round(wavelength)].get_extinction(lwc, reff, veff))
         return extinction
+
+    def get_albedo(self, wavelength, grid_list=None):
+        """
+        Retrieve the single scattering albedo at a single wavelength on a grid.
+
+        Parameters
+        ----------
+        wavelength: float
+            Wavelength in microns. A Mie table at this wavelength should be added prior (see add_mie method).
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        albedo: shdom.GridData
+            A GridData object containing the single scattering albedo [0,1] on a grid
+
+        Notes
+        -----
+        The input wavelength is rounded to three decimals.
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+        albedo =[]
+        # if self.args.lwc is None:
+        #     for grid in grid_list:
+        #         if grid.type == 'Homogeneous':
+        #             alb_data = self.args.albedo
+        #         elif grid.type == '1D':
+        #             alb_data = np.full(shape=(grid.nz), fill_value=self.args.albedo, dtype=np.float32)
+        #         elif grid.type == '3D':
+        #             alb_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.albedo, dtype=np.float32)
+        #         albedo.append(shdom.GridData(grid, alb_data))
+        # else:
+        assert wavelength is not None, 'No wavelength provided'
+        reff_list = self.get_reff(grid_list)
+        veff_list = self.get_veff(grid_list)
+        for reff, veff in zip(reff_list,veff_list):
+            albedo.append(self.mie[shdom.float_round(wavelength)].get_albedo(reff, veff))
+        return albedo
+
+    def get_phase(self, wavelength, grid_list=None):
+        """
+        Retrieve the single scattering albedo at a single wavelength on a grid.
+
+        Parameters
+        ----------
+        wavelength: float
+            Wavelength in microns. A Mie table at this wavelength should be added prior (see add_mie method).
+        grid: shdom.Grid, optional
+            A shdom.Grid object. If None is specified than a grid is created from Arguments given to the generator (get_grid method)
+
+        Returns
+        -------
+        albedo: shdom.GridData
+            A GridData object containing the single scattering albedo [0,1] on a grid
+
+        Notes
+        -----
+        The input wavelength is rounded to three decimals.
+        """
+        if grid_list is None:
+            grid_list = self.get_grid()
+        phase =[]
+        # for grid in grid_list:
+        #     if grid.type == 'Homogeneous':
+        #         phase_data = self.args.phase
+        #     elif grid.type == '1D':
+        #         phase_data = np.full(shape=(grid.nz), fill_value=self.args.phase, dtype=np.float32)
+        #     elif grid.type == '3D':
+        #         phase_data = np.full(shape=(grid.nx, grid.ny, grid.nz), fill_value=self.args.phase, dtype=np.float32)
+        #     phase.append(shdom.GridData(grid, phase_data))
+        # else:
+        assert wavelength is not None, 'No wavelength provided'
+        reff_list = self.get_reff(grid_list)
+        veff_list = self.get_veff(grid_list)
+        for reff, veff in zip(reff_list,veff_list):
+            phase.append(self.mie[shdom.float_round(wavelength)].get_phase(reff, veff))
+        return phase
 
     def get_lwc(self, grid_list=None):
         """
@@ -1269,13 +1398,15 @@ class DynamicMediumEstimator(object):
         self._wavelength = []
         self._dynamic_medium = []
         self._time_list = []
+        self._dynamic_medium_estimator = []
         self._dynamic_scatterer_estimator = dynamic_scatterer_estimator
         self._scatterer_velocity = scatterer_velocity
         if dynamic_scatterer_estimator is not None and air is not None:
             self.set_dynamic_medium_estimator(dynamic_scatterer_estimator,air,loss_type, exact_single_scatter, stokes_weights)
 
     def set_dynamic_medium_estimator(self, dynamic_scatterer_estimator, air, loss_type='l2', exact_single_scatter=True, stokes_weights=None):
-        assert isinstance(dynamic_scatterer_estimator,DynamicScattererEstimator) and isinstance(air,shdom.Scatterer)
+        assert isinstance(dynamic_scatterer_estimator,DynamicScattererEstimator) \
+                    and (isinstance(air,shdom.Scatterer) or isinstance(air,shdom.MultispectralScatterer))
         self._num_mediums = 0
         self._dynamic_medium_estimator = []
         self._time_list = []
@@ -1340,7 +1471,7 @@ class DynamicMediumEstimator(object):
 
     def compute_gradient_regularization(self,regularization_const, regularization_type='l2'):
         loss = 0
-        for param_name, _ in self.dynamic_scatterer_estimator.temporary_scatterer_estimator_list[0].scatterer.estimators.items():
+        for param_name, param in self.dynamic_scatterer_estimator.temporary_scatterer_estimator_list[0].scatterer.estimators.items():
             typical_avg = {
                 'extinction': 1,
                 'lwc': 0.01,
@@ -1354,6 +1485,7 @@ class DynamicMediumEstimator(object):
             #     'veff': 1
             # }
             param_typical_avg = typical_avg[param_name]
+            param_typical_avg = param.precondition_scale_factor ** 0.5
 
             estimated_parameter_stack = []
             # grid_size = param.grid.nx * param.grid.ny * param.grid.nz
@@ -2401,7 +2533,7 @@ class DynamicSpaceCarver(object):
             self._projections = [measurements.camera.projection]
         self._images = measurements.images
 
-    def carve(self, grid, thresholds,time_list, agreement=0.75, vx_max=5, vy_max=5, gt_velocity = None):
+    def carve(self, grid, thresholds, time_list, agreement=0.75, vx_max=5, vy_max=5, gt_velocity = None):
         """
         Carves out the cloud geometry on the grid.
         A threshold on radiances is used to produce a pixel mask and preform space carving.
@@ -2436,11 +2568,12 @@ class DynamicSpaceCarver(object):
         best_match = -np.inf
 
         if gt_velocity is None:
-            vx_vec = np.linspace(-vx_max, vx_max, num=20)
-            vy_vec = np.linspace(-vy_max, vy_max, num=20)
+            vx_vec = np.linspace(-vx_max, vx_max, num=5)
+            vy_vec = np.linspace(-vy_max, vy_max, num=5)
         else:
             vx_vec = [gt_velocity[0]]
             vy_vec = [gt_velocity[1]]
+        first = True
         for vx in vx_vec:
             for vy in vy_vec:
                 dynamic_grid = []
@@ -2457,7 +2590,7 @@ class DynamicSpaceCarver(object):
                         image = image[0]
 
                     image_mask = image > threshold
-                    if 0:
+                    if 1 and first:
                         plt.imshow(image_mask)
                         plt.show()
                     projection = projection[image_mask.ravel(order='F') == 1]
@@ -2489,6 +2622,7 @@ class DynamicSpaceCarver(object):
                     dynamic_grid.append(shdom.GridData(shifted_grid, volume).grid)
                 volume = volume * 1.0 / len(self._images)
                 match = np.sum(volume > agreement)
+                first = False
 
                 if match > best_match:
                     best_match = match
@@ -2508,8 +2642,6 @@ class DynamicSpaceCarver(object):
 
 
 def cloud_plot(a):
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
     x = np.arange(a.shape[0])[:, None, None]
     y = np.arange(a.shape[1])[None, :, None]
     z = np.arange(a.shape[2])[None, None, :]

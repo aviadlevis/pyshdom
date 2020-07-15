@@ -752,7 +752,7 @@ class MediumEstimator(shdom.Medium):
     stokes_weights: list of floats
         Loss function weights for stokes vector components [I,Q,U,V].
     """
-    def __init__(self, grid=None, loss_type='l2', exact_single_scatter=False, stokes_weights=None):
+    def __init__(self, grid=None, loss_type='l2', exact_single_scatter=True, stokes_weights=None):
         super().__init__(grid)
         self._estimators = OrderedDict()
         self._num_parameters = []
@@ -833,7 +833,7 @@ class MediumEstimator(shdom.Medium):
             self._estimators[name] = scatterer
             self._num_parameters.append(np.sum(scatterer.num_parameters))
             self._unknown_scatterers_indices = np.concatenate((
-                self.unknown_scatterers_indices, 
+                self.unknown_scatterers_indices,
                 np.full(total_num_estimators, self.num_scatterers, dtype=np.int32)))
             self._num_derivatives += total_num_estimators
 
@@ -906,11 +906,11 @@ class MediumEstimator(shdom.Medium):
         dext = np.zeros(shape=[rte_solver._nbpts, self.num_derivatives], dtype=np.float32)
         dalb = np.zeros(shape=[rte_solver._nbpts, self.num_derivatives], dtype=np.float32)
         diphase = np.zeros(shape=[rte_solver._nbpts, self.num_derivatives], dtype=np.int32)
-    
+
         i=0
         for estimator in self.estimators.values():
             for dtype in estimator.derivatives.keys():
-                derivative = estimator.get_derivative(dtype, rte_solver.wavelength)       
+                derivative = estimator.get_derivative(dtype, rte_solver.wavelength)
                 resampled_derivative = derivative.resample(self.grid)
                 dext[:, i] = resampled_derivative.extinction.data.ravel()
                 dalb[:, i] = resampled_derivative.albedo.data.ravel()
@@ -919,13 +919,13 @@ class MediumEstimator(shdom.Medium):
                 if i == 0:
                     leg_table = copy.deepcopy(resampled_derivative.phase.legendre_table)
                 else:
-                    leg_table.append(copy.deepcopy(resampled_derivative.phase.legendre_table))                
+                    leg_table.append(copy.deepcopy(resampled_derivative.phase.legendre_table))
                 i += 1
-                
+
         leg_table.pad(rte_solver._nleg)
         dleg = leg_table.data
         dnumphase = leg_table.numphase
-        
+
         # zero the first term of the first component of the phase function
         # gradient. Pre-scale the legendre moments by 1/(2*l+1) which
         # is done in the forward problem in TRILIN_INTERP_PROP
@@ -957,7 +957,7 @@ class MediumEstimator(shdom.Medium):
         """
         Compute the derivative with respect to the direct solar beam. This is a ray for every point in 3D space.
         Internally this method stores for every point the indices and paths traversed by the direct solar beam to reach it.
-        
+
         Parameters
         ----------
         rte_solver: shdom.RteSolver
@@ -971,7 +971,7 @@ class MediumEstimator(shdom.Medium):
             rte_solver = rte_solver[0]
         else:
             uniformzlev = rte_solver._uniformzlev
-            
+
         self._direct_derivative_path, self._direct_derivative_ptr = \
             core.make_direct_derivative(
                 npts=rte_solver._npts,
@@ -1002,8 +1002,8 @@ class MediumEstimator(shdom.Medium):
                 uniformzlev=uniformzlev,
                 delxd=rte_solver._delxd,
                 delyd=rte_solver._delyd
-            )       
-        
+            )
+
     def grad_normcorr(self, rte_solver, projection, pixels):
         """
         The core normalized correlation gradient method.
@@ -1041,16 +1041,16 @@ class MediumEstimator(shdom.Medium):
             weights=self._stokes_weights[:rte_solver._nstokes],
             exact_single_scatter=self._exact_single_scatter,
             nstphase=rte_solver._nstphase,
-            dpath=self._direct_derivative_path, 
+            dpath=self._direct_derivative_path,
             dptr=self._direct_derivative_ptr,
             npx=rte_solver._pa.npx,
             npy=rte_solver._pa.npy,
             npz=rte_solver._pa.npz,
             delx=rte_solver._pa.delx,
-            dely=rte_solver._pa.dely,                
+            dely=rte_solver._pa.dely,
             xstart=rte_solver._pa.xstart,
             ystart=rte_solver._pa.ystart,
-            zlevels=rte_solver._pa.zlevels, 
+            zlevels=rte_solver._pa.zlevels,
             extdirp=rte_solver._pa.extdirp,
             uniformzlev=rte_solver._uniformzlev,
             partder=self.unknown_scatterers_indices,
@@ -1070,7 +1070,7 @@ class MediumEstimator(shdom.Medium):
             ny=rte_solver._ny,
             nz=rte_solver._nz,
             bcflag=rte_solver._bcflag,
-            ipflag=rte_solver._ipflag,   
+            ipflag=rte_solver._ipflag,
             npts=rte_solver._npts,
             nbpts=rte_solver._nbpts,
             ncells=rte_solver._ncells,
@@ -1089,7 +1089,7 @@ class MediumEstimator(shdom.Medium):
             nsfcpar=rte_solver._nsfcpar,
             gridptr=rte_solver._gridptr,
             neighptr=rte_solver._neighptr,
-            treeptr=rte_solver._treeptr,             
+            treeptr=rte_solver._treeptr,
             shptr=rte_solver._shptr,
             bcptr=rte_solver._bcptr,
             cellflags=rte_solver._cellflags,
@@ -1123,7 +1123,7 @@ class MediumEstimator(shdom.Medium):
             camz=projection.z,
             cammu=projection.mu,
             camphi=projection.phi,
-            npix=total_pix,       
+            npix=total_pix,
             srctype=rte_solver._srctype,
             sfctype=rte_solver._sfctype,
             units=rte_solver._units,
@@ -1262,7 +1262,7 @@ class MediumEstimator(shdom.Medium):
         """
         Compute the gradient with respect to the current state.
         If n_jobs>1 than parallel gradient computation is used with pixels are distributed amongst all workers
-        
+
         Parameters
         ----------
         rte_solvers: shdom.RteSolverArray
@@ -1290,9 +1290,9 @@ class MediumEstimator(shdom.Medium):
         projection = measurements.camera.projection
         sensor = measurements.camera.sensor
         pixels = measurements.pixels
-        
+
         # Sequential or parallel processing using multithreading (threadsafe Fortran)
-        if n_jobs > 1:           
+        if n_jobs > 1:
             output = Parallel(n_jobs=n_jobs, backend="threading", verbose=0)(
                 delayed(self.core_grad, check_pickle=False)(
                     rte_solver=rte_solvers[channel],
@@ -1306,7 +1306,7 @@ class MediumEstimator(shdom.Medium):
                 self.core_grad(rte_solvers[channel], projection, pixels[..., channel])
                 for channel in range(self.num_wavelengths)
             ]
-        
+
         # Sum over all the losses of the different channels
         loss, gradient, images = self.output_transform(output, projection, sensor, self.num_wavelengths)
 
@@ -1324,7 +1324,7 @@ class MediumEstimator(shdom.Medium):
 
     @property
     def num_parameters(self):
-        return self._num_parameters  
+        return self._num_parameters
 
     @property
     def unknown_scatterers_indices(self):
@@ -1332,7 +1332,7 @@ class MediumEstimator(shdom.Medium):
 
     @property
     def num_derivatives(self):
-        return self._num_derivatives 
+        return self._num_derivatives
 
     @property
     def num_estimators(self):
@@ -1353,7 +1353,7 @@ class SummaryWriter(object):
     This wrapper enables logging of images, error measures and loss with pre-determined temporal intervals into tensorboard.
 
     To view the summary of this run (and comparisons to all subdirectories):
-        tensorboard --logdir LOGDIR 
+        tensorboard --logdir LOGDIR
 
     Parameters
     ----------
@@ -1396,7 +1396,7 @@ class SummaryWriter(object):
     def monitor_loss(self, ckpt_period=-1):
         """
         Monitor the loss.
-        
+
         Parameters
         ----------
         ckpt_period: float
@@ -1412,7 +1412,7 @@ class SummaryWriter(object):
     def save_checkpoints(self, ckpt_period=-1):
         """
         Save a checkpoint of the Optimizer
-        
+
         Parameters
         ----------
         ckpt_period: float
@@ -1442,7 +1442,7 @@ class SummaryWriter(object):
 
     def monitor_shdom_iterations(self, ckpt_period=-1):
         """Monitor the number of SHDOM forward iterations.
-        
+
         Parameters
         ----------
         ckpt_period: float
@@ -1459,7 +1459,7 @@ class SummaryWriter(object):
         """
         Monitor relative and overall mass error (epsilon, delta) as defined at:
           Amit Aides et al, "Multi sky-view 3D aerosol distribution recovery".
-        
+
         Parameters
         ----------
         estimator_name: str
@@ -1564,7 +1564,7 @@ class SummaryWriter(object):
     def monitor_images(self, measurements, ckpt_period=-1):
         """
         Monitor the synthetic images and compare to the acquired images
-    
+
         Parameters
         ----------
         measurements: shdom.Measurements
@@ -1601,9 +1601,9 @@ class SummaryWriter(object):
             keyword arguments
         """
         timestr = time.strftime("%H%M%S")
-        path = os.path.join(self.tf_writer.logdir,  timestr + '.ckpt')
+        path = os.path.join(self.tf_writer.log_dir,  timestr + '.ckpt')
         self.optimizer.save_state(path)
-        
+
     def loss_cbfn(self, kwargs):
         """
         Callback function that is called (every optimizer iteration) for loss monitoring.
@@ -1640,7 +1640,7 @@ class SummaryWriter(object):
             keyword arguments
         """
         self.write_image_list(self.optimizer.iteration, self.optimizer.images, kwargs['title'], kwargs['vmax'])
-    
+
     def shdom_iterations_cbfn(self, kwargs):
         """
         Callback function that is called (every optimizer iteration) for shdom iteration monitoring.
@@ -1651,7 +1651,7 @@ class SummaryWriter(object):
             keyword arguments
         """
         self.tf_writer.add_scalar(kwargs['title'], self.optimizer.rte_solver.num_iterations, self.optimizer.iteration)
-        
+
     def scatterer_error_cbfn(self, kwargs):
         """
         Callback function for monitoring parameter error measures.
@@ -1671,7 +1671,7 @@ class SummaryWriter(object):
                 epsilon = np.linalg.norm((est_param - gt_param), 1) / np.linalg.norm(gt_param,1)
                 self.tf_writer.add_scalar(kwargs['title'][0].format(scatterer_name, parameter_name), delta, self.optimizer.iteration)
                 self.tf_writer.add_scalar(kwargs['title'][1].format(scatterer_name, parameter_name), epsilon, self.optimizer.iteration)
-        
+
     def domain_mean_cbfn(self, kwargs):
         """
         Callback function for monitoring domain averages of parameters.
@@ -1786,7 +1786,7 @@ class SummaryWriter(object):
     def write_image_list(self, global_step, images, titles, vmax=None):
         """
         Write an image list to tensorboardX.
-    
+
         Parameters
         ----------
         global_step: integer,
@@ -1799,11 +1799,11 @@ class SummaryWriter(object):
             List or a single of scaling factor for the image contrast equalization
         """
         if np.isscalar(vmax) or vmax is None:
-            vmax = [vmax]*len(images)        
-    
+            vmax = [vmax]*len(images)
+
         assert len(images) == len(titles), 'len(images) != len(titles): {} != {}'.format(len(images), len(titles))
         assert len(vmax) == len(titles), 'len(vmax) != len(images): {} != {}'.format(len(vmax), len(titles))
-    
+
         for image, title, vm in zip(images, titles, vmax):
 
             # for polarization
@@ -1820,7 +1820,7 @@ class SummaryWriter(object):
             # for polychromatic
             elif image.ndim == 3:
                 self.tf_writer.add_images(
-                    tag=title, 
+                    tag=title,
                     img_tensor=(np.repeat(np.expand_dims(image, 2), 3, axis=2) / vm),
                     dataformats='HWCN',
                     global_step=global_step
@@ -1828,7 +1828,7 @@ class SummaryWriter(object):
             # for monochromatic
             else:
                 self.tf_writer.add_image(
-                    tag=title, 
+                    tag=title,
                     img_tensor=(image / vm),
                     dataformats='HW',
                     global_step=global_step
@@ -1849,27 +1849,27 @@ class SummaryWriter(object):
     @property
     def optimizer(self):
         return self._optimizer
-    
+
     @property
     def tf_writer(self):
         return self._tf_writer
-    
+
 
 class SpaceCarver(object):
     """
     SpaceCarver object recovers the convex hull of the cloud based on multi-view sensor geometry and pixel segmentation.
-    
+
     Parameters
     ----------
     measurements: shdom.Measurements
         A measurements object storing the images and sensor geometry
     """
     def __init__(self, measurements):
-    
+
         self._rte_solver = shdom.RteSolver(shdom.SceneParameters(), shdom.NumericalParameters())
-        
+
         self._measurements = measurements
-        
+
         if isinstance(measurements.camera.projection, shdom.MultiViewProjection):
             self._projections = measurements.camera.projection.projection_list
         else:
@@ -1878,9 +1878,9 @@ class SpaceCarver(object):
 
     def carve(self, grid, thresholds, agreement=0.75):
         """
-        Carves out the cloud geometry on the grid. 
+        Carves out the cloud geometry on the grid.
         A threshold on radiances is used to produce a pixel mask and preform space carving.
-        
+
         Parameters
         ----------
         grid: shdom.Grid
@@ -1889,7 +1889,7 @@ class SpaceCarver(object):
             Either a constant threshold or a list of len(thresholds)=num_projections is used as for masking.
         agreement: float
             the precentage of pixels that should agree on a cloudy voxels to set it to True in the mask
-        
+
         Returns
         -------
         mask: shdom.GridData object
@@ -1901,14 +1901,14 @@ class SpaceCarver(object):
         """
         self._rte_solver.set_grid(grid)
         volume = np.zeros((grid.nx, grid.ny, grid.nz))
-        
+
         thresholds = np.array(thresholds)
         if thresholds.size == 1:
             thresholds = np.repeat(thresholds, len(self._images))
         else:
             assert thresholds.size == len(self._images), 'thresholds (len={}) should be of the same' \
                    'length as the number of images (len={})'.format(thresholds.size,  len(self._images))
-            
+
         for projection, image, threshold in zip(self._projections, self._images, thresholds):
 
             if self._measurements.num_channels > 1:
@@ -1917,9 +1917,9 @@ class SpaceCarver(object):
                 image = image[0]
 
             image_mask = image > threshold
-                
+
             projection = projection[image_mask.ravel(order='F') == 1]
-            
+
             carved_volume = core.space_carve(
                 nx=grid.nx,
                 ny=grid.ny,
@@ -1944,9 +1944,9 @@ class SpaceCarver(object):
                 npix=projection.npix,
             )
             volume += carved_volume.reshape(grid.nx, grid.ny, grid.nz)
-        
+
         volume = volume * 1.0 / len(self._images)
-        mask = GridData(grid, volume > agreement) 
+        mask = GridData(grid, volume > agreement)
         return mask
 
     @property
@@ -1960,7 +1960,7 @@ class LocalOptimizer(object):
     To run the optimization the following methods should be called:
        [required] optimizer.set_measurements()
        [required] optimizer.set_rte_solver()
-       [required] optimizer.set_medium_estimator() 
+       [required] optimizer.set_medium_estimator()
        [optional] optimizer.set_writer()
 
     Parameters
@@ -1995,22 +1995,22 @@ class LocalOptimizer(object):
             raise NotImplementedError('Optimization method [{}] not implemented'.format(method))
         self._method = method
         self._options = options
-        
+
     def set_measurements(self, measurements):
         """
         Set the measurements (data-fit constraints)
-        
+
         Parameters
         ----------
         measurements: shdom.Measurements
             A measurements object storing the acquired images and sensor geometry
         """
         self._measurements = measurements
-    
+
     def set_medium_estimator(self, medium_estimator):
         """
         Set the MediumEstimator for the optimizer.
-        
+
         Parameters
         ----------
         medium_estimator: shdom.MediumEstimator
@@ -2021,7 +2021,7 @@ class LocalOptimizer(object):
     def set_rte_solver(self, rte_solver):
         """
         Set the RteSolver for the SHDOM iterations.
-        
+
         Parameters
         ----------
         rte_solver: shdom.RteSolver
@@ -2035,7 +2035,7 @@ class LocalOptimizer(object):
     def set_writer(self, writer):
         """
         Set a log writer to upload summaries into tensorboard.
-        
+
         Parameters
         ----------
         writer: shdom.SummaryWriter
@@ -2043,8 +2043,8 @@ class LocalOptimizer(object):
         """
         self._writer = writer
         if writer is not None:
-            self._writer.attach_optimizer(self)        
-        
+            self._writer.attach_optimizer(self)
+
     def objective_fun(self, state):
         """
         The objective function (cost) and gradient at the current state.
@@ -2075,10 +2075,10 @@ class LocalOptimizer(object):
         self._loss = loss
         self._images = images
         return loss, gradient
-            
+
     def callback(self, state):
         """
-        The callback function invokes the callbacks defined by the writer (if any). 
+        The callback function invokes the callbacks defined by the writer (if any).
         Additionally it keeps track of the iteration number.
 
         Parameters
@@ -2087,7 +2087,7 @@ class LocalOptimizer(object):
             The current state vector
         """
         self._iteration += 1
-        
+
         # Writer callback functions
         if self.writer is not None:
             for callbackfn, kwargs in zip(self.writer.callback_fns, self.writer.kwargs):
@@ -2111,7 +2111,7 @@ class LocalOptimizer(object):
                           options=self.options,
                           callback=self.callback)
         return result
-    
+
     def init_optimizer(self):
         """
         Initialize the optimizer.
@@ -2129,7 +2129,7 @@ class LocalOptimizer(object):
         self.rte_solver.init_solution()
         self.medium.compute_direct_derivative(self.rte_solver)
         self._num_parameters = self.medium.num_parameters
-        
+
     def get_bounds(self):
         """
         Retrieve the bounds for every parameter from the MediumEstimator (used by scipy.minimize)
@@ -2140,7 +2140,7 @@ class LocalOptimizer(object):
             The lower and upper bound of each parameter
         """
         return self.medium.get_bounds()
-    
+
     def get_state(self):
         """
         Retrieve MediumEstimator state
@@ -2151,7 +2151,7 @@ class LocalOptimizer(object):
             The state of the medium estimator
         """
         return self.medium.get_state()
-    
+
     def set_state(self, state):
         """
         Set the state of the optimization. This means:
@@ -2170,15 +2170,15 @@ class LocalOptimizer(object):
         if self._init_solution is False:
             self.rte_solver.make_direct()
         self.rte_solver.solve(maxiter=100, init_solution=self._init_solution, verbose=False)
-        
+
     def save_state(self, path):
         """
         Save Optimizer state to file.
-        
+
         Parameters
         ----------
         path: str,
-            Full path to file. 
+            Full path to file.
         """
         file = open(path, 'wb')
         file.write(pickle.dumps(self.get_state(), -1))
@@ -2187,15 +2187,15 @@ class LocalOptimizer(object):
     def load_state(self, path):
         """
         Load Optimizer from file.
-        
+
         Parameters
         ----------
         path: str,
-            Full path to file. 
+            Full path to file.
         """
         file = open(path,'rb')
         data = file.read()
-        file.close()        
+        file.close()
         state = pickle.loads(data)
         self.set_state(state)
 
@@ -2210,23 +2210,23 @@ class LocalOptimizer(object):
     @property
     def rte_solver(self):
         return self._rte_solver
-    
+
     @property
     def medium(self):
-        return self._medium    
-    
+        return self._medium
+
     @property
     def measurements(self):
         return self._measurements
-    
+
     @property
     def num_parameters(self):
         return self._num_parameters
 
     @property
     def writer(self):
-        return self._writer      
-    
+        return self._writer
+
     @property
     def iteration(self):
         return self._iteration
@@ -2237,8 +2237,8 @@ class LocalOptimizer(object):
 
     @property
     def loss(self):
-        return self._loss        
-    
+        return self._loss
+
     @property
     def images(self):
         return self._images

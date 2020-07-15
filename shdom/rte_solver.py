@@ -683,7 +683,7 @@ class RteSolver(object):
         # Guess maximum number of grid points, cells, SH vector size needed
         # but don't let MAX_TOTAL_MB be exceeded
         if self._max_total_mb*1024**2 > 1.75*sys.maxsize:
-            self._max_total_mb > 1.75*sys.maxsize/1024**2 
+            self._max_total_mb = 1.75*sys.maxsize/1024**2 ##roi switch > to =
             print('MAX_TOTAL_MB reduced to fit memory model: ', self._max_total_mb)
     
         if self._splitacc < 0.0:

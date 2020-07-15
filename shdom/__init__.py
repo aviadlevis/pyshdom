@@ -306,7 +306,7 @@ class Grid(object):
     @x.setter
     def x(self, val):
         val = np.array(val, dtype=np.float32)
-        spacing = np.around(np.diff(val),5)
+        spacing = np.around(np.diff(val),3)
         assert np.all(np.isclose(spacing, spacing[0])), 'x grid supoprt equally spacing only'
         self._x = val
         self._dx = spacing[0]  
@@ -320,7 +320,7 @@ class Grid(object):
     @y.setter
     def y(self, val):
         val = np.array(val, dtype=np.float32)
-        spacing = np.around(np.diff(val),5)
+        spacing = np.around(np.diff(val),3)
         assert np.all(np.isclose(spacing, spacing[0])), 'y grid supoprt equally spacing only'
         self._y = val
         self._dy = spacing[0] 
@@ -645,6 +645,7 @@ from shdom.sensor import *
 from shdom.rte_solver import *
 from shdom.optimize import *
 from shdom.dynamic_scene import *
+from shdom.AirMSPI import *
 # import shdom.generate as Generate
 
 

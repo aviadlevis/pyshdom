@@ -748,7 +748,7 @@ class PerspectiveProjection(HomographyProjection):
         x = np.full(4, self.position[0], dtype=np.float32)
         y = np.full(4, self.position[1], dtype=np.float32)
         z = np.full(4, self.position[2], dtype=np.float32)
-        ax.set_aspect('equal')
+        # ax.set_aspect('equal')
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
         ax.set_zlim(*zlim)
@@ -942,7 +942,6 @@ class Measurements(object):
                 raise AttributeError('Error image dimensions: {}'.format(uncertainty.ndim))
         pixels = np.concatenate(pixels, axis=-2)
         return pixels
-
 
     def save(self, path):
         """

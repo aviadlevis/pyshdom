@@ -1,0 +1,30 @@
+Metadata-Version: 1.2
+Name: shdom
+Version: 3.0.0
+Summary: 3D Radiative Transfer Inversion using the SHDOM forward algorithm
+Home-page: https://github.com/aviadlevis/pyshdom
+Maintainer: Aviad Levis; Jesse Loveridge
+Maintainer-email: aviad.levis@gmail.com
+License: MIT
+Description: 
+        Pyshdom performs 3D reconstruction of cloud microphysical properties from multi-angle, multi-spectral solar reflected 
+        radiation using a non-linear optimization procedure. The core radiative transfer routines are sourced from the 
+        Fortran SHDOM (Spherical Harmonic Discrete Ordinate Method for 3D Atmospheric Radiative Transfer) code by Frank K. Evans [1]. 
+        The python package was created by Aviad Levis [2], Amit Aides (Technion - Israel Institute of Technology) and Jesse Loveridge (University of Illinois).
+        The inversion algorithms for can be found in the following papers:
+         - `Levis, Aviad, et al. "Airborne Three-Dimensional Cloud Tomography." Proceedings of the IEEE International Conference on Computer Vision. 2015.`
+         - `Levis, Aviad, et al. "Multiple-Scattering Microphysical Tomography." Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. 2017.`
+        
+        [1] http://nit.colorado.edu/shdom.html
+        [2] https://www.aviadlevis.com/3d-remote-sensing
+        
+Platform: any
+Classifier: Development Status :: 3 - Alpha
+Classifier: Programming Language :: Python
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Classifier: Operating System :: OS Independent
+Requires: numpy
+Requires: scipy

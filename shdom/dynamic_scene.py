@@ -780,28 +780,29 @@ class Homogeneous(shdom.CloudGenerator):
         #     'time_list, scatterer_velocity_list have wrong dimensions'
         # scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T  # km
         #
-        x_min = measurements.camera.projection.x.min()
-        x_max = measurements.camera.projection.x.max()
-        y_min = measurements.camera.projection.y.min()
-        y_max = measurements.camera.projection.y.max()
-        z_min = 0
-        z_max = measurements.camera.projection.z.max()
-
-
-        # bb = shdom.BoundingBox(x_min,y_min, z_min, x_max, y_max, z_max)
-        # grid = shdom.Grid(bounding_box=bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
-
-        dx = np.round((x_max - x_min) / self.args.nx, 5)
-        x = np.arange(x_min, x_max, dx)
-
-        dy = np.round((y_max - y_min) / self.args.ny, 5)
-        y = np.arange(y_min, y_max, dy)
-
-        dz = np.round((z_max - z_min) / self.args.nz, 5)
-        z = np.arange(z_min, z_max, dz)
-
-        grid = shdom.Grid(x=x,
-                          y=y, z=z)
+        # x_min = measurements.camera.projection.x.min()
+        # x_max = measurements.camera.projection.x.max()
+        # y_min = measurements.camera.projection.y.min()
+        # y_max = measurements.camera.projection.y.max()
+        # z_min = 0
+        # z_max = measurements.camera.projection.z.max()
+        #
+        #
+        # # bb = shdom.BoundingBox(x_min,y_min, z_min, x_max, y_max, z_max)
+        # # grid = shdom.Grid(bounding_box=bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
+        #
+        # dx = np.round((x_max - x_min) / self.args.nx, 5)
+        # x = np.arange(x_min, x_max, dx)
+        #
+        # dy = np.round((y_max - y_min) / self.args.ny, 5)
+        # y = np.arange(y_min, y_max, dy)
+        #
+        # dz = np.round((z_max - z_min) / self.args.nz, 5)
+        # z = np.arange(z_min, z_max, dz)
+        #
+        # grid = shdom.Grid(x=x,
+        #                   y=y, z=z)
+        grid = shdom.Grid(x=np.linspace(0.5, 1.5, 26), y=np.linspace(-2, -1, 26), z=np.linspace(0.5, 1.5, 13))
 
         # for scatterer_shift in scatterer_shifts:
         #     grid_list.append(shdom.Grid(bounding_box=bb,

@@ -202,9 +202,9 @@ class OptimizationScript(object):
 
         # Find a cloud mask for non-cloudy grid points
         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.3,
+        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.7,
                             time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
-                            vx_max = 0, vy_max=5, gt_velocity = cloud_velocity)
+                            vx_max = 0, vy_max=0, gt_velocity = cloud_velocity)
         show_mask=1
         if show_mask:
             a = (mask_list[0].data).astype(int)
@@ -310,8 +310,7 @@ class OptimizationScript(object):
 
         # Reload previous state
         if self.args.reload_path is not None:
-            optimizer.load_state(self.args.reload_path)
-        return optimizer
+            optimizer.load_state(self.args.reload_path)        return optimizer
 
     def get_rte_solver(self,measurements, medium_estimator):
         scene_params_list = []
@@ -327,7 +326,7 @@ class OptimizationScript(object):
                 source=shdom.SolarSource(azimuth=sun_azimuth, zenith=sun_zenith)
             )
             scene_params_list.append(scene_params)
-            numerical_params = shdom.NumericalParameters(num_mu_bins=16, num_phi_bins=32, split_accuracy=0.1)
+            numerical_params = shdom.NumericalParameters(num_mu_bins=8, num_phi_bins=16, split_accuracy=0.1)
             numerical_params_list.append(numerical_params)
 
         dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params_list, numerical_params=numerical_params_list)

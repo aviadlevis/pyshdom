@@ -226,12 +226,21 @@ class Grid(object):
         # Middle part of the atmosphere (grids intersect)
         z_middle_self = self.z
         z_middle_other = other.z
+
+        mask_self = np.ones(self.z.shape, dtype=bool)
+        mask_other = np.ones(other.z.shape, dtype=bool)
         if z_bottom.any():
-            z_middle_self = self.z[self.z > z_bottom[-1]]
-            z_middle_other = other.z[other.z > z_bottom[-1]]
+            mask_self = self.z > z_bottom[-1]
+            mask_other = other.z > z_bottom[-1]
+            # z_middle_self = self.z[self.z > z_bottom[-1]]
+            # z_middle_other = other.z[other.z > z_bottom[-1]]
         if z_top.any():
-            z_middle_self = self.z[self.z < z_top[0]]
-            z_middle_other = other.z[other.z < z_top[0]]
+            mask_self = mask_self & (self.z < z_top[0])
+            mask_other = mask_other & (other.z < z_top[0])
+            # z_middle_self = self.z[self.z < z_top[0]]
+            # z_middle_other = other.z[other.z < z_top[0]]
+        z_middle_self = self.z[mask_self]
+        z_middle_other = other.z[mask_other]
     
         z_middle = z_middle_self if len(z_middle_self) > len(z_middle_other) else z_middle_other
     
@@ -297,7 +306,7 @@ class Grid(object):
     @x.setter
     def x(self, val):
         val = np.array(val, dtype=np.float32)
-        spacing = np.diff(val)
+        spacing = np.around(np.diff(val),3)
         assert np.all(np.isclose(spacing, spacing[0])), 'x grid supoprt equally spacing only'
         self._x = val
         self._dx = spacing[0]  
@@ -311,7 +320,7 @@ class Grid(object):
     @y.setter
     def y(self, val):
         val = np.array(val, dtype=np.float32)
-        spacing = np.diff(val)
+        spacing = np.around(np.diff(val),3)
         assert np.all(np.isclose(spacing, spacing[0])), 'y grid supoprt equally spacing only'
         self._y = val
         self._dy = spacing[0] 
@@ -629,13 +638,15 @@ class BoundingBox(object):
         zmax = max(self.zmax, other.zmax)
         return BoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)
 
-
+from shdom.generate import *
 from shdom.phase import *
 from shdom.medium import *
 from shdom.sensor import *
 from shdom.rte_solver import *
 from shdom.optimize import *
-import shdom.generate as Generate
+from shdom.dynamic_scene import *
+from shdom.AirMSPI import *
+# import shdom.generate as Generate
 
 
 def save_forward_model(directory, medium, solver, measurements):

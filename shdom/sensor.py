@@ -196,9 +196,10 @@ class RadianceSensor(Sensor):
         """
         multiview = isinstance(projection, shdom.MultiViewProjection)
         multichannel = num_channels > 1
-        
+        # radiance = radiance.T
         if multichannel:
-            radiance = np.array(np.split(radiance, num_channels)).T
+            radiance = np.array(np.split(radiance, num_channels))
+            radiance = radiance.T
 
         if multiview:
             split_indices = np.cumsum(projection.npix[:-1])
@@ -212,17 +213,17 @@ class RadianceSensor(Sensor):
             else:
                 radiance = [
                     image.reshape(resolution, order='F')
-                    for image, resolution in zip(radiance, projection.resolution) 
-                ]                  
+                    for image, resolution in zip(radiance, projection.resolution)
+                ]
         else:
-            new_shape = projection.resolution
+            new_shape = projection.resolution.copy()
             if multichannel:
-                new_shape.append(num_channels)       
+                new_shape.append(num_channels)
             radiance = radiance.reshape(new_shape, order='F')
-                
-        return radiance         
-    
- 
+
+        return radiance
+
+
 class StokesSensor(Sensor):
     """
     A StokesSensor measures monochromatic stokes vector [I, U, Q, V].
@@ -230,15 +231,15 @@ class StokesSensor(Sensor):
     def __init__(self):
         super().__init__()
         self._type = 'StokesSensor'
-    
+
     def render(self, rte_solver, projection, n_jobs=1, verbose=0):
-        """      
+        """
         The render method integrates a pre-computed stokes vector in-scatter field (source function) J over the sensor geometry.
-        The source code for this function is in src/polarized/shdomsub4.f. 
+        The source code for this function is in src/polarized/shdomsub4.f.
         It is a modified version of the original SHDOM visualize_radiance subroutine in src/polarized/shdomsub2.f.
-        
+
         If n_jobs > 1 than parallel rendering is used where all pixels are distributed amongst all workers
-        
+
         Parameters
         ----------
         rte_solver: shdom.RteSolver object
@@ -266,7 +267,7 @@ class StokesSensor(Sensor):
         else:
             num_channels = 1
             rte_solvers = [rte_solver]
-        
+
         # Pre-computation of phase-function for all solvers.
         for rte_solver in rte_solvers:
             rte_solver._phasetab = core.precompute_phase_check(
@@ -282,27 +283,27 @@ class StokesSensor(Sensor):
                 legen=rte_solver._legen,
                 deltam=rte_solver._deltam
             )
-            
+
         # Parallel rendering using multithreading (threadsafe Fortran)
         if n_jobs > 1:
             stokes = Parallel(n_jobs=n_jobs, backend="threading", verbose=verbose)(
                 delayed(super(StokesSensor, self).render, check_pickle=False)(
                     rte_solver=rte_solver,
-                    projection=projection) for rte_solver, projection in 
-                itertools.product(rte_solvers, projection.split(n_jobs)))  
-            
+                    projection=projection) for rte_solver, projection in
+                itertools.product(rte_solvers, projection.split(n_jobs)))
+
         # Sequential rendering
-        else:      
+        else:
             stokes = [super(StokesSensor, self).render(rte_solver, projection) for rte_solver in rte_solvers]
-          
-        stokes = np.hstack(stokes) 
+
+        stokes = np.hstack(stokes)
         images = self.make_images(stokes, projection, num_channels)
         return images
-        
+
     def make_images(self, stokes, projection, num_channels):
         """
         Split into Multiview, Multi-channel Stokes images (channel last)
-        
+
         Parameters
         ----------
         stokes: np.array(dtype=np.float32)
@@ -311,22 +312,22 @@ class StokesSensor(Sensor):
             The projection geometry
         num_channels: int
             The number of channels
-            
+
         Returns
         -------
         stokes: np.array(dtype=np.float32)
             An array of stokes pixels with the shape (NSTOKES,H,W,C) or (NSTOKES,H,W) for a single channel.
         """
         multiview = isinstance(projection, shdom.MultiViewProjection)
-        multichannel = num_channels > 1        
+        multichannel = num_channels > 1
 
         if multichannel:
-            stokes = np.array(np.split(stokes, num_channels, axis=-1)).transpose([1, 2, 0]).squeeze()      
-    
-        if multiview: 
-            split_indices = np.cumsum(projection.npix[:-1])        
+            stokes = np.array(np.split(stokes, num_channels, axis=-1)).transpose([1, 2, 0]).squeeze()
+
+        if multiview:
+            split_indices = np.cumsum(projection.npix[:-1])
             stokes = np.split(stokes, split_indices, axis=1)
-    
+
             if multichannel:
                 stokes = [
                     image.reshape([image.shape[0]] + resolution + [num_channels], order='F')
@@ -335,14 +336,14 @@ class StokesSensor(Sensor):
             else:
                 stokes = [
                     image.reshape([image.shape[0]] + resolution, order='F')
-                    for image, resolution in zip(stokes, projection.resolution) 
-                ]                  
+                    for image, resolution in zip(stokes, projection.resolution)
+                ]
         else:
             new_shape = [stokes.shape[0]] + projection.resolution
             if multichannel:
-                new_shape.append(num_channels)       
+                new_shape.append(num_channels)
             stokes = stokes.reshape(new_shape, order='F')
-            
+
         return stokes
 
 
@@ -353,15 +354,15 @@ class DolpAolpSensor(StokesSensor):
     def __init__(self):
         super().__init__()
         self._type = 'DolpAolpSensor'
-    
+
     def render(self, rte_solver, projection, n_jobs=1, verbose=0):
-        """   
+        """
         The render method integrates a pre-computed stokes vector in-scatter field (source function) J over the sensor geometry.
-        The source code for this function is in src/polarized/shdomsub4.f. 
+        The source code for this function is in src/polarized/shdomsub4.f.
         It is a modified version of the original SHDOM subroutine in src/polarized/shdomsub2.f.
-        
+
         If n_jobs>1 than parallel rendering is used where all pixels are distributed amongst all workers
-        
+
         Parameters
         ----------
         rte_solver: shdom.RteSolver object
@@ -372,8 +373,8 @@ class DolpAolpSensor(StokesSensor):
             The number of jobs to divide the rendering into.
         verbose: int, default=0
             How much verbosity in the parallel rendering proccess.
-            
-            
+
+
         Returns
         -------
         dolp: np.array(shape=(sensor.resolution), dtype=np.float32)
@@ -382,14 +383,14 @@ class DolpAolpSensor(StokesSensor):
             Angle of Linear Polarization
         """
         stokes = super().render(rte_solver, projection, n_jobs, verbose)
-        
+
         indices = stokes[0] > 0.0
         dolp = np.zeros_like(stokes[0])
         aolp = np.zeros_like(stokes[0])
         i, q, u = stokes[0][indices], stokes[1][indices], stokes[2][indices]
         dolp[indices] = np.sqrt(q**2 + u**2) / i
         aolp[indices] = (180.0/np.pi) * 0.5 * np.arctan2(u, q)
-        
+
         # Choose the best range for the angle of linear polarization (-90 to 90 or 0 to 180)
         aolp1 = aolp.reshape(-1, aolp.shape[-1])
         aolp2 = aolp1.copy()
@@ -397,7 +398,7 @@ class DolpAolpSensor(StokesSensor):
         std1 = np.std(aolp1, axis=0)
         std2 = np.std(aolp2, axis=0)
         aolp[..., std2 < std1] = aolp2.reshape(aolp.shape)[..., std2 < std1]
-        
+
         return dolp, aolp
 
 
@@ -405,7 +406,7 @@ class Projection(object):
     """
     Abstract Projection class to be inherited by the different types of projections.
     Each projection defines an arrays of pixel locations (x,y,z) in km and directions (phi, mu).
-    
+
     Parameters
     ----------
     x: np.array(np.float32)
@@ -420,7 +421,7 @@ class Projection(object):
         Azimuth angle [rad] of the measurements (direction of photons)
     resolution: list
         Resolution is the number of pixels in each dimension (H,W) used to reshape arrays into images.
-        
+
     Notes
     -----
     All input arrays are raveled and should be of the same size.
@@ -436,97 +437,99 @@ class Projection(object):
             assert x.size==y.size==z.size==mu.size==phi.size, 'All input arrays must be of equal size'
             self._npix = x.size
         self._resolution = resolution
-        
+
     def __getitem__(self, val):
         projection = Projection(
-            x=np.array(self._x[val]), 
+            x=np.array(self._x[val]),
             y=np.array(self._y[val]),
-            z=np.array(self._z[val]), 
-            mu=np.array(self._mu[val]), 
+            z=np.array(self._z[val]),
+            mu=np.array(self._mu[val]),
             phi=np.array(self._phi[val]),
         )
         return projection
-    
+
     def split(self, n_parts):
         """
         Split the projection geometry.
-        
+
         Parameters
         ----------
         n_parts: int
-            The number of parts to split the projection geometry to 
-        
+            The number of parts to split the projection geometry to
+
         Returns
         -------
         projections: list
             A list of projections each with n_parts
-            
+
         Notes
         -----
         An even split doesnt always exist, in which case some parts will have slightly more pixels.
         """
-        x_split = np.array_split(self.x, n_parts) 
-        y_split = np.array_split(self.y, n_parts) 
-        z_split = np.array_split(self.z, n_parts) 
-        mu_split = np.array_split(self.mu, n_parts) 
-        phi_split = np.array_split(self.phi, n_parts)        
+
+        x_split = np.array_split(self.x, n_parts)
+        y_split = np.array_split(self.y, n_parts)
+        z_split = np.array_split(self.z, n_parts)
+        mu_split = np.array_split(self.mu, n_parts)
+        phi_split = np.array_split(self.phi, n_parts)
+
         projections = [
-            Projection(x, y, z, mu, phi) for 
+            Projection(x, y, z, mu, phi) for
             x, y, z, mu, phi in zip(x_split, y_split, z_split, mu_split, phi_split)
         ]
         return projections
-    
+
     @property
     def x(self):
         return self._x
-    
+
     @property
     def y(self):
         return self._y
-    
+
     @property
     def z(self):
         return self._z
-    
+
     @property
     def mu(self):
         return self._mu
-    
+
     @property
     def phi(self):
         return self._phi
-    
+
     @property
     def zenith(self):
         return np.rad2deg(np.arccos(self.mu))
- 
+
     @property
     def azimuth(self):
         return np.rad2deg(self.phi)
-    
-    @property 
+
+    @property
     def npix(self):
-        return self._npix    
-    
+        return self._npix
+
     @property
     def resolution(self):
         if self._resolution is None:
             return [self.npix, ]
         else:
-            return self._resolution  
-    
-    
+            return self._resolution
+
+
 class HomographyProjection(Projection):
     """
     A Homography has a projective tansformation that relates 3D coordinates to pixels.
     """
     def __init__(self):
         super().__init__()
-        
+
     def project(self, projection_matrix, point_array):
         """
         Project 3D coordinates according to the sensor projection matrix
-        
+
         Parameters
         ----------
         projection matrix: np.array(shape=(3,4), dtype=float)
@@ -535,13 +538,13 @@ class HomographyProjection(Projection):
             An array of num_points 3D points (x,y,z) [km]
         """
         homogenic_point_array = np.pad(point_array,((0,1),(0,0)),'constant', constant_values=1)
-        return np.dot(projection_matrix, homogenic_point_array)  
-  
+        return np.dot(projection_matrix, homogenic_point_array)
+
 
 class OrthographicProjection(HomographyProjection):
     """
-    A parallel ray projection. 
-    
+    A parallel ray projection.
+
     Parameters
     ----------
     bounding_box: shdom.BoundingBox object
@@ -556,22 +559,22 @@ class OrthographicProjection(HomographyProjection):
         Zenith angle [deg] of the measurements (direction of photons)
     altitude: float or 'TOA' (default)
        1. 'TOA': Top of the atmosphere.
-       2. float: Altitude of the  measurements.    
+       2. float: Altitude of the  measurements.
     """
-    
+
     def __init__(self, bounding_box, x_resolution, y_resolution, azimuth, zenith, altitude='TOA'):
         super().__init__()
         self._x_resolution = x_resolution
         self._y_resolution = y_resolution
-        
+
         mu = np.cos(np.deg2rad(zenith))
         phi = np.deg2rad(azimuth)
         if altitude == 'TOA':
             self._altitude = bounding_box.zmax
         else:
             assert (type(altitude) == float or type(altitude) == int), 'altitude of incorrect type'
-            self._altitude = altitude        
-            
+            self._altitude = altitude
+
         # Project the bounding box onto the image plane
         alpha = np.sqrt(1 - mu**2) * np.cos(phi) / mu
         beta  = np.sqrt(1 - mu**2) * np.sin(phi) / mu
@@ -580,13 +583,13 @@ class OrthographicProjection(HomographyProjection):
             [0, 1,  -beta, beta * self.altitude],
             [0, 0,      0,        self.altitude]
         ])
-        
+
         self.projection_matrix = projection_matrix
-        bounding_box_8point_array = np.array(list(itertools.product([bounding_box.xmin, bounding_box.xmax], 
+        bounding_box_8point_array = np.array(list(itertools.product([bounding_box.xmin, bounding_box.xmax],
                                                                     [bounding_box.ymin, bounding_box.ymax],
                                                                     [bounding_box.zmin, bounding_box.zmax]))).T
         projected_bounding_box = self.project(projection_matrix, bounding_box_8point_array)
-            
+
         # Use projected bounding box to define image sampling
         x_s, y_s = projected_bounding_box[:2,:].min(axis=1)
         x_e, y_e = projected_bounding_box[:2,:].max(axis=1)
@@ -602,23 +605,23 @@ class OrthographicProjection(HomographyProjection):
         self._npix = self.x.size
         self._resolution = [x.size, y.size]
 
-    @property 
+    @property
     def altitude(self):
         return self._altitude
-    
-    @property 
+
+    @property
     def x_resolution(self):
         return self._x_resolution
-     
-    @property 
+
+    @property
     def y_resolution(self):
         return self._y_resolution
-    
-    
+
+
 class PerspectiveProjection(HomographyProjection):
     """
     A Perspective trasnormation (pinhole camera).
-    
+
     Parameters
     ----------
     fov: float
@@ -646,7 +649,7 @@ class PerspectiveProjection(HomographyProjection):
                             [0, 0, 1]], dtype=np.float32)
         self._inv_k = np.linalg.inv(self._k)
         self._rotation_matrix = np.eye(3)
-        x_c, y_c, z_c = np.meshgrid(np.linspace(-1, 1, nx), np.linspace(-1, 1, ny), 1.0)        
+        x_c, y_c, z_c = np.meshgrid(np.linspace(-1, 1, nx), np.linspace(-1, 1, ny), 1.0)
         self._homogeneous_coordinates = np.stack([x_c.ravel(), y_c.ravel(), z_c.ravel()])
         self.update_global_coordinates()
 
@@ -666,7 +669,7 @@ class PerspectiveProjection(HomographyProjection):
     def look_at_transform(self, point, up):
         """
         A look at transform is defined with a point and an up vector.
-        
+
         Parameters
         ----------
         point: np.array(shape=(3,), dtype=float)
@@ -681,18 +684,18 @@ class PerspectiveProjection(HomographyProjection):
         yaxis = np.cross(zaxis, xaxis)
         self._rotation_matrix = np.stack((xaxis, yaxis, zaxis), axis=1)
         self.update_global_coordinates()
-        
+
     def rotate_transform(self, axis, angle):
         """
         Rotate the camera with respect to one of it's (local) axis
-        
+
         Parameters
         ----------
         axis: 'x', 'y' or 'z'
             The rotation axis
         angle: float
             The angle of rotation [deg]
-            
+
         Notes
         -----
         The axis are in the camera coordinates
@@ -711,15 +714,15 @@ class PerspectiveProjection(HomographyProjection):
         elif axis == 'z':
             rot = np.array([[np.cos(angle), -np.sin(angle), 0],
                             [np.sin(angle), np.cos(angle), 0],
-                            [0, 0, 1]], dtype=np.float32)        
-        
+                            [0, 0, 1]], dtype=np.float32)
+
         self._rotation_matrix = np.matmul(self._rotation_matrix, rot)
         self.update_global_coordinates()
 
     def plot(self, ax, xlim, ylim, zlim, length=0.1):
         """
         Plot the cameras and their orientation in 3D space using matplotlib's quiver.
-        
+
         Parameters
         ----------
         ax: matplotlib.pyplot.axis
@@ -729,14 +732,14 @@ class PerspectiveProjection(HomographyProjection):
         ylim: list
             [ymin, ymax] to set the domain limits
         zlim: list
-            [zmin, zmax] to set the domain limits 
+            [zmin, zmax] to set the domain limits
         length: float, default=0.1
             The length of the quiver arrows in the plot
-            
+
         Notes
         -----
         The axis are in the camera coordinates
-        """        
+        """
         mu = -self.mu.reshape(self.resolution)[[0, -1, 0, -1],[0, 0, -1, -1]]
         phi = np.pi + self.phi.reshape(self.resolution)[[0, -1, 0, -1],[0, 0, -1, -1]]
         u = np.sqrt(1 - mu**2) * np.cos(phi)
@@ -745,7 +748,7 @@ class PerspectiveProjection(HomographyProjection):
         x = np.full(4, self.position[0], dtype=np.float32)
         y = np.full(4, self.position[1], dtype=np.float32)
         z = np.full(4, self.position[2], dtype=np.float32)
-        ax.set_aspect('equal')
+        # ax.set_aspect('equal')
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
         ax.set_zlim(*zlim)
@@ -754,12 +757,12 @@ class PerspectiveProjection(HomographyProjection):
     @property
     def position(self):
         return self._position
-    
-    
+
+
 class PrincipalPlaneProjection(Projection):
     """
     Measurments along the principal solar plane.
-    
+
     Parameters
     ----------
     source: shdom.SolarSource
@@ -770,7 +773,7 @@ class PrincipalPlaneProjection(Projection):
         Location in global y coordinates [km] (East)
     z: float
         Location in global z coordinates [km] (Up)
-    resolution: float 
+    resolution: float
         Angular resolution of the measurements in [deg]
     """
     def __init__(self, source, x, y, z, resolution=1.0):
@@ -783,16 +786,16 @@ class PrincipalPlaneProjection(Projection):
         self._mu = (np.cos(np.deg2rad(self._angles))).astype(np.float64)
         self._phi = np.deg2rad(180 * (self._angles < 0.0).astype(np.float64) + source.azimuth)
         self._source = source
-    
-    @property 
+
+    @property
     def angles(self):
         return self._angles
-        
-        
+
+
 class AlmucantarProjection(Projection):
     """
     Measurments along the solar almucantar.
-    
+
     Parameters
     ----------
     source: shdom.SolarSource
@@ -803,7 +806,7 @@ class AlmucantarProjection(Projection):
         Location in global y coordinates [km] (East)
     z: float
         Location in global z coordinates [km] (Up)
-    resolution: float 
+    resolution: float
         Angular resolution of the measurements in [deg]
     """
     def __init__(self, source, x, y, z, resolution=1.0):
@@ -819,7 +822,7 @@ class AlmucantarProjection(Projection):
 class HemisphericProjection(Projection):
     """
     Measurments on a hemisphere.
-    
+
     Parameters
     ----------
     source: shdom.SolarSource
@@ -830,7 +833,7 @@ class HemisphericProjection(Projection):
         Location in global y coordinates [km] (East)
     z: float
         Location in global z coordinates [km] (Up)
-    resolution: float 
+    resolution: float
         Angular resolution of the measurements in [deg]
     """
     def __init__(self, x, y, z, resolution=5.0):
@@ -862,53 +865,92 @@ class Measurements(object):
     pixels: np.array(dtype=float)
         pixels are a flattened version of the image list where the channel dimension is kept (1 for monochrome).
     """
-    def __init__(self, camera=None, images=None, pixels=None, wavelength=None):
+    def __init__(self, camera=None, images=None, pixels=None, wavelength=None, uncertainties=None):
         self._camera = camera
         self._images = images
         self._wavelength = np.atleast_1d(wavelength)
+        self._noise = None
+        self._uncertainties = uncertainties
 
-        num_channels = 0
         if images is not None:
+            pixels = self.images_to_pixels(images)
 
-            if type(images) is not list:
-                self._images = [images]
-
-            pixels = []
-            for image in self.images:
-                if camera.sensor.type == 'RadianceSensor':
-                    num_channels = image.shape[-1] if image.ndim == 3 else 1
-                    pixels.append(image.reshape((-1, num_channels), order='F'))
-
-                elif camera.sensor.type == 'StokesSensor':
-                    num_channels = image.shape[-1] if image.ndim == 4 else 1
-                    pixels.append(image.reshape((image.shape[0], -1, num_channels), order='F'))
-
-                else:
-                    raise AttributeError('Error image dimensions: {}'.format(image.ndim))
-            pixels = np.concatenate(pixels, axis=-2)
-
-        elif pixels is not None:
-            if (pixels.ndim == 1 and camera.sensor.type == 'RadianceSensor') or (pixels.ndim == 2 and camera.sensor.type == 'StokesSensor'):
-                num_channels = 1
-                pixels = pixels[..., None]
-            elif (pixels.ndim == 2 and camera.sensor.type == 'RadianceSensor') or (pixels.ndim == 3 and camera.sensor.type == 'StokesSensor'):
-                num_channels = pixels.shape[-1]
-            else:
-                raise AttributeError('Pixels should be a flat along spatial dimensions while maintaining channels/stokes dimension')
-
-        if num_channels > 1:
-            assert num_channels == len(self._wavelength), 'Number of channels = {} differs from len(wavelength)={}'.format(num_channels, len(self._wavelength))
         self._pixels = pixels
-        self._num_channels = num_channels
+        self._num_channels = pixels.shape[-1] if pixels is not None else None
+        if self.num_channels is not None and self.num_channels > 1:
+            assert self.num_channels == len(self._wavelength), 'Number of channels = {} differs from len(wavelength)={}'.format(self.num_channels, len(self._wavelength))
+
+    def images_to_pixels(self, images):
+        """
+        Set image list.
+
+        Parameters
+        ----------
+        images: list of images,
+            A list of images (multiview camera)
+
+        Returns
+        -------
+        pixels: a flattened version of the image list
+        """
+        pixels = []
+
+        if type(images) is not list:
+            images = [images]
+
+        for image in images:
+            if self.camera.sensor.type == 'RadianceSensor':
+                num_channels = image.shape[-1] if image.ndim == 3 else 1
+                pixels.append(image.reshape((-1, num_channels), order='F'))
+
+            elif self.camera.sensor.type == 'StokesSensor':
+                num_channels = image.shape[-1] if image.ndim == 4 else 1
+                pixels.append(image.reshape((image.shape[0], -1, num_channels), order='F'))
+
+            else:
+                raise AttributeError('Error image dimensions: {}'.format(image.ndim))
+        pixels = np.concatenate(pixels, axis=-2)
+        return pixels
+
+    def uncertainty_to_pixels(self, uncertainties):
+        """
+        Set uncertainty pixel list.
+
+        Parameters
+        ----------
+        uncertainties: list of uncertainties,
+            A list of images (multiview camera)
+
+        Returns
+        -------
+        pixels: a flattened version of the uncertainties list
+        """
+        pixels = []
+
+        if type(uncertainties) is not list:
+            uncertainties = [uncertainties]
+
+        for uncertainty in uncertainties:
+            if self.camera.sensor.type == 'RadianceSensor':
+                raise NotImplementedError
+
+            elif self.camera.sensor.type == 'StokesSensor':
+                num_channels = uncertainty.shape[-1] if uncertainty.ndim == 5 else 1
+                pixels.append(uncertainty.reshape((uncertainty.shape[0], uncertainty.shape[1], -1, num_channels), order='F'))
+
+            else:
+                raise AttributeError('Error image dimensions: {}'.format(uncertainty.ndim))
+        pixels = np.concatenate(pixels, axis=-2)
+        return pixels
 
     def save(self, path):
         """
         Save Measurements to file.
-    
+
         Parameters
         ----------
         path: str,
-            Full path to file. 
+            Full path to file.
         """
         file = open(path, 'wb')
         file.write(pickle.dumps(self.__dict__, -1))
@@ -921,47 +963,70 @@ class Measurements(object):
         Parameters
         ----------
         path: str,
-            Full path to file. 
-        """        
+            Full path to file.
+        """
         file = open(path, 'rb')
         data = file.read()
         file.close()
         self.__dict__ = pickle.loads(data)
-    
+
     def split(self, n_parts):
         """
         Split the measurements and projection.
-        
+
         Parameters
         ----------
         n_parts: int
-            The number of parts to split the measurements to 
-        
+            The number of parts to split the measurements to
+
         Returns
         -------
         measurements: list
             A list of measurements each with n_parts
-            
+
         Notes
         -----
         An even split doesnt always exist, in which case some parts will have slightly more pixels.
         """
+
         projections = self.camera.projection.split(n_parts)
+
         pixels = np.array_split(self.pixels, n_parts)
         measurements = [shdom.Measurements(
-            camera=shdom.Camera(self.camera.sensor, projection), 
-            pixels=pixel) for projection, pixel in zip(projections, pixels)
+            camera=shdom.Camera(self.camera.sensor, projection),wavelength=self.wavelength,
+            pixels=pixel, images=image) for projection, pixel, image in zip(projections, pixels, self.images)
         ]
         return measurements
+
+    def set_noise(self, noise):
+        """
+        Set sensor modeled noise to the measurements
+
+        Parameters
+        ----------
+        noise: shdom.Noise
+            A noise model
+        """
+        assert hasattr(noise, 'correlation'), "Noise has to have correlation attribute"
+        self._noise = noise
+        images, uncertainties = noise.apply(self)
+        self._images = images
+        self._pixels = self.images_to_pixels(images)
+        self._uncertainties = self.uncertainty_to_pixels(uncertainties)
+        self._num_channels = self.pixels.shape[-1]
 
     @property
     def camera(self):
         return self._camera
-    
+
     @property
     def pixels(self):
         return self._pixels
-    
+
+    @property
+    def uncertainties(self):
+        return self._uncertainties
+
     @property
     def images(self):
         return self._images
@@ -977,11 +1042,15 @@ class Measurements(object):
         else:
             return self._wavelength
 
+    @property
+    def noise(self):
+        return self._noise
+
 
 class Camera(object):
     """
     An Camera object ecapsulates both sensor and projection.
-    
+
     Parameters
     ----------
     sensor: shdom.Sensor
@@ -992,33 +1061,33 @@ class Camera(object):
     def __init__(self, sensor=Sensor(), projection=Projection()):
         self.set_sensor(sensor)
         self.set_projection(projection)
-        
+
     def set_projection(self, projection):
         """
         Add a projection.
-        
+
         Parameters
         ----------
         projection: shdom.Projection
             A projection geomtry
         """
         self._projection = projection
-        
+
     def set_sensor(self, sensor):
         """
         Add a sensor.
-        
+
         Parameters
         ----------
         sensor: shdom.Sensor
             A sensor object
-            
+
         Notes
         -----
         This method also updates the docstring of the render method according to the specific sensor
-        """        
+        """
         self._sensor = sensor
-        
+
         # Update function docstring
         if sensor.render.__doc__ is not None:
             self.render.__func__.__doc__ += sensor.render.__doc__
@@ -1026,7 +1095,7 @@ class Camera(object):
     def render(self, rte_solver, n_jobs=1, verbose=0):
         """
         Render an image according to the render function defined by the sensor.
-        
+
         Notes
         -----
         This is a dummy docstring that is overwritten when the set_sensor method is used.
@@ -1036,16 +1105,16 @@ class Camera(object):
     @property
     def projection(self):
         return self._projection
-    
+
     @property
     def sensor(self):
         return self._sensor
-    
+
 
 class MultiViewProjection(Projection):
     """
     A MultiViewProjection object encapsulate several projection geometries for multi-view imaging of a domain.
-    
+
     Parameters
     ----------
     projection_list: list, optional
@@ -1059,24 +1128,24 @@ class MultiViewProjection(Projection):
         if projection_list:
             for projection in projection_list:
                 self.add_projection(projection)
-    
+
     def add_projection(self, projection, name=None):
         """
         Add a projection to the projection list
-        
+
         Parameters
         ----------
         projection: Projection object
             A Projection object to add to the MultiViewProjection
         name: str, optional
-            An ID for the projection. 
+            An ID for the projection.
         """
         # Set a default name for the projection
         if name is None:
             name = 'View{}'.format(self.num_projections)
 
         attributes = ['x', 'y', 'z', 'mu', 'phi']
-        
+
         if self.num_projections == 0:
             for attr in attributes:
                 self.__setattr__('_' + attr, projection.__getattribute__(attr))
@@ -1085,19 +1154,19 @@ class MultiViewProjection(Projection):
             self._names = [name]
         else:
             for attr in attributes:
-                self.__setattr__('_' + attr, np.concatenate((self.__getattribute__(attr), 
+                self.__setattr__('_' + attr, np.concatenate((self.__getattribute__(attr),
                                                              projection.__getattribute__(attr))))
             self._npix.append(projection.npix)
-            self._names.append(name)  
+            self._names.append(name)
             self._resolution.append(projection.resolution)
-                                    
+
         self._projection_list.append(projection)
-        self._num_projections += 1 
+        self._num_projections += 1
 
     @property
     def projection_list(self):
         return self._projection_list
-    
+
     @property
     def num_projections(self):
         return self._num_projections
@@ -1107,17 +1176,9 @@ class Noise(object):
     """
     An abstract noise object to be inherited by specific noise models
 
-    Parameters
-    ----------
-    full_well: integer
-      full well in electrons. Translates radiance measurements and electron counts.
-    quantum_efficiency: float
-      in range [0,1]. Translates electrons and photon counts.
     """
-
-    def __init__(self, full_well, quantum_efficiency):
-        self.full_well = full_well
-        self.qe = quantum_efficiency
+    def __init__(self):
+        self.correlation = None
 
     def apply(self, measurements):
         """
@@ -1137,19 +1198,18 @@ class AirMSPINoise(Noise):
             Rider, D.M., Chipman, R.A., Mahler, A.B. and McClain, S.C., 2010.
             First results from a dual photoelastic-modulator-based polarimetric camera.
             Applied optics, 49(15), pp.2929-2946.
-
-    Notes
-    -----
-    The maximum radiance measurement is transformed to 0.85*max_well (200K electrons) before Poisson noise is applied
-    35% Quantum effciency at 660nm according to [2]
     """
 
     def __init__(self):
-        super().__init__(full_well=200000, quantum_efficiency=0.35)
-
         from scipy.special import j0, jv
 
-        self.polarized_bands = [0.47, 0.66, 0.865]  # microns
+        self.full_well = 200000
+        # Table 5 of [1]
+        bandwidths = [45, 46, 47]
+        optical_throughput = [0.516, 0.605, 0.602]
+        quantum_efficiencies = [0.4, 0.35, 0.13]
+        self.polarized_bands = [0.47, 0.66, 0.862]
+
         num_subframes = 23
         p = np.linspace(0.0, 1.0, num_subframes + 1)
         p1 = p[0:-1]
@@ -1159,8 +1219,10 @@ class AirMSPINoise(Noise):
         r = 0.0
         eta = 0.009
 
-        self.pq, self.pu, self.w = dict(), dict(), dict()
-        for wavelength, delta0 in zip(self.polarized_bands, delta0_list):
+        self.p, self.correlation, self.w, self.reflectance_to_electrons = dict(), dict(), dict(), dict()
+        for wavelength, delta0, ot, qe, bw in zip(self.polarized_bands, delta0_list, optical_throughput,
+                                                  quantum_efficiencies, bandwidths):
+
             # Define z'(x_n) (Eq. 8in [1])
             z_idx = np.pi * x != eta
             z = np.full_like(x, r)
@@ -1178,11 +1240,17 @@ class AirMSPINoise(Noise):
 
             # P modulation matrix for I, Q, U with and idealized modulator (without the linear correction factor)
             # Eq. 15 of [1]
-            self.pq[wavelength] = np.vstack((np.ones_like(x), f, np.zeros_like(x))).T
-            self.pu[wavelength] = np.vstack((np.ones_like(x), np.zeros_like(x), f)).T
+            pq = np.vstack((np.ones_like(x), f, np.zeros_like(x))).T
+            pu = np.vstack((np.ones_like(x), np.zeros_like(x), f)).T
+            self.p[wavelength] = np.vstack((pq, pu))
+            self.correlation[wavelength] = np.matmul(self.p[wavelength].T, self.p[wavelength])
 
             # W demodulation matrix (Eq. 16 of [1])
-            self.w[wavelength] = np.linalg.pinv(np.vstack((self.pq[wavelength], self.pu[wavelength])))
+            self.w[wavelength] = np.linalg.pinv(self.p[wavelength])
+
+            # Transform rho into S (Eq. (24) of [1])
+            self.reflectance_to_electrons[wavelength] = (1.408 * 10**18 * ot * qe * bw) / \
+                                                      ((1000*wavelength)**4 * (np.exp(2489.7/(1000*wavelength))) - 1)
 
     def apply(self, measurements):
         """
@@ -1195,12 +1263,20 @@ class AirMSPINoise(Noise):
 
         Returns
         -------
-        noisy_measurements: shdom.Measurements
-            output noisy measurements
+        images: list of images
+            A list of images (multiview camera)
+        uncertainties: list of image pixel uncertainties
+           A list of uncertainty images (multiview camera)
+
+        Notes
+        -----
+        Non-polarized bands are not implemented.
         """
         images = []
+        uncertainties = []
         for view in measurements.images:
             multi_spectral_image = []
+            multi_spectral_uncertainty = []
             for i, wavelength in enumerate(measurements.wavelength):
                 image = view[..., i]
                 if isinstance(measurements.camera.sensor, shdom.StokesSensor):
@@ -1209,32 +1285,34 @@ class AirMSPINoise(Noise):
                             wavelength, self.polarized_bands)
                         )
 
-                    image0 = np.matmul(self.pq[wavelength], np.rollaxis(image, 1))
-                    image45 = np.matmul(self.pu[wavelength], np.rollaxis(image, 1))
-                    image0_sign = np.sign(image0)
-                    image45_sign = np.sign(image45)
-                    image0_mag = np.abs(image0)
-                    image45_mag = np.abs(image45)
+                    # Reflectance at 0, 45 degrees concatenated (total of 46 subframe measurements)
+                    reflectance = np.matmul(self.p[wavelength], np.rollaxis(image, 1))
 
-                    # Gain
-                    g0 = (1.0 / self.qe) * 0.85 * self.full_well / image0_mag.max()
-                    g45 = (1.0 / self.qe) * 0.85 * self.full_well / image45_mag.max()
+                    # Electrons from reflectance
+                    electrons = self.reflectance_to_electrons[wavelength] * reflectance
 
-                    # Digital number d with Poisson noise
-                    d0 = (self.qe * image0_mag.max() / (0.85 * self.full_well)) * \
-                         np.random.poisson(np.round(g0 * image0_mag)).astype(np.float32) * image0_sign
-                    d45 = (self.qe * image45_mag.max() / (0.85 * self.full_well)) * \
-                          np.random.poisson(np.round(g45 * image45_mag)).astype(np.float32) * image45_sign
-                    d = np.concatenate((d0, d45), axis=1)
+                    # Adjust gain induced by exposure, gain, lens size etc to make maximum signal reach a max well
+                    gain = self.full_well / electrons.max()
+                    electrons = np.round(electrons * gain)
+
+                    # Apply Poisson noise
+                    electrons = np.random.poisson(electrons)
+
+                    # Compute the Poisson induced uncertainty
+                    uncertainty = np.sqrt(electrons / (self.reflectance_to_electrons[wavelength] * gain))
+                    correlated_uncertainty = np.dot(
+                        self.p[wavelength].T,
+                        np.rollaxis(self.p[wavelength][None, :, None] / uncertainty[..., None], -1)
+                    )
 
                     # Back to I, Q, U using W demodulation matrix
-                    noisy_image = np.rollaxis(np.matmul(self.w[wavelength], d), 1)
-                else:
-                    g = 0.85 * self.full_well / image.max()
-                    noisy_image = (image.max() / (0.85 * self.full_well)) * np.random.poisson(
-                        np.round(g * image)).astype(np.float32)
-                multi_spectral_image.append(noisy_image)
+                    noisy_image = np.rollaxis(np.matmul(self.w[wavelength], electrons), 1) / \
+                                  (self.reflectance_to_electrons[wavelength] * gain)
 
+                else:
+                    raise NotImplementedError
+                multi_spectral_uncertainty.append(correlated_uncertainty)
+                multi_spectral_image.append(noisy_image)
+            uncertainties.append(np.stack(multi_spectral_uncertainty, axis=-1))
             images.append(np.stack(multi_spectral_image, axis=-1))
-        noisy_measurements = shdom.Measurements(measurements.camera, images=images, wavelength=measurements.wavelength)
-        return noisy_measurements
+        return images, uncertainties

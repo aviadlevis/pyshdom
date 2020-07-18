@@ -127,7 +127,7 @@ class OptimizationScript(object):
                             action='store_true',
                             help='Use the ground-truth phase reconstruction.')
         parser.add_argument('--radiance_threshold',
-                            default=[0.05],
+                            default=[0.02],
                             nargs='+',
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
@@ -187,6 +187,14 @@ class OptimizationScript(object):
         self.cloud_generator = CloudGenerator(self.args) if CloudGenerator is not None else None
         self.air_generator = AirGenerator(self.args) if AirGenerator is not None else None
 
+    def save_args(self,log_dir):
+        text_file = open(log_dir+"/Input_args.txt", "w")
+        for data in self.args.__dict__:
+            text_file.write("{} : {}\n".format(data, self.args.__dict__[data]))
+        text_file.close()
+
+
+
     def get_medium_estimator(self, measurements, ground_truth):
         """
         Generate the medium estimator for optimization.
@@ -217,10 +225,17 @@ class OptimizationScript(object):
 
         # Find a cloud mask for non-cloudy grid points
         if self.args.use_forward_mask:
-            mask = ground_truth.get_mask(threshold=1.0)
+            mask = ground_truth.get_mask(threshold=0.001)
         else:
             carver = shdom.SpaceCarver(measurements)
-            mask = carver.carve(grid, agreement=0.9, thresholds=self.args.radiance_threshold)
+            mask = carver.carve(grid, agreement=0.75, thresholds=self.args.radiance_threshold)
+            show_mask = 1
+            if show_mask:
+                a = (mask.data).astype(int)
+                b = ((ground_truth.get_mask(threshold=0.001).data)).astype(int)
+                print(np.sum(np.abs(a - b)))
+                shdom.cloud_plot(a)
+                shdom.cloud_plot(b)
 
         # Define the known albedo and phase: either ground-truth or specified, but it is not optimized.
         if self.args.use_forward_albedo is False or self.args.use_forward_phase is False:
@@ -287,6 +302,8 @@ class OptimizationScript(object):
             writer.monitor_scatter_plot(estimator_name=self.scatterer_name, ground_truth=ground_truth, dilute_percent=0.4)
             writer.monitor_horizontal_mean(estimator_name=self.scatterer_name, ground_truth=ground_truth, ground_truth_mask=ground_truth.get_mask(threshold=1.0))
 
+            # save parse_arguments
+            self.save_args(log_dir)
         return writer
 
     def load_forward_model(self, input_directory):
@@ -368,7 +385,7 @@ class OptimizationScript(object):
         # Optimization process
         num_global_iter = 1
         if self.args.globalopt:
-            global_optimizer = shdom.GlobalOptimizer(local_optimizer=optimizer)
+            global_optimizer = shdom.GlobalOptimizer(local_optimizer=local_optimizer)
             result = global_optimizer.minimize(niter_success=20, T=1e-3)
             num_global_iter = result.nit
             result = result.lowest_optimization_result

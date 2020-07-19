@@ -780,16 +780,16 @@ class Homogeneous(shdom.CloudGenerator):
         #     'time_list, scatterer_velocity_list have wrong dimensions'
         # scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T  # km
         #
-        # x_min = measurements.camera.projection.x.min()
-        # x_max = measurements.camera.projection.x.max()
-        # y_min = measurements.camera.projection.y.min()
-        # y_max = measurements.camera.projection.y.max()
-        # z_min = 0
-        # z_max = measurements.camera.projection.z.max()
+        x_min = measurements.camera.projection.x.min()
+        x_max = measurements.camera.projection.x.max()
+        y_min = measurements.camera.projection.y.min()
+        y_max = measurements.camera.projection.y.max()
+        z_min = 0
+        z_max = 20
         #
         #
-        # # bb = shdom.BoundingBox(x_min,y_min, z_min, x_max, y_max, z_max)
-        # # grid = shdom.Grid(bounding_box=bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
+        bb = shdom.BoundingBox(x_min,y_min, z_min, x_max, y_max, z_max)
+        grid = shdom.Grid(bounding_box=bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
         #
         # dx = np.round((x_max - x_min) / self.args.nx, 5)
         # x = np.arange(x_min, x_max, dx)
@@ -802,7 +802,7 @@ class Homogeneous(shdom.CloudGenerator):
         #
         # grid = shdom.Grid(x=x,
         #                   y=y, z=z)
-        grid = shdom.Grid(x=np.linspace(0.5, 1.5, 26), y=np.linspace(-2, -1, 26), z=np.linspace(0.5, 1.5, 13))
+        # grid = shdom.Grid(x=np.linspace(0.5, 1.5, 26), y=np.linspace(-2, -1, 26), z=np.linspace(0.5, 1.5, 13))
 
         # for scatterer_shift in scatterer_shifts:
         #     grid_list.append(shdom.Grid(bounding_box=bb,
@@ -1448,10 +1448,10 @@ class DynamicMediumEstimator(object):
 
         for medium_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, multispectral_solvers_list, measurements, resolutions):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray(rte_solver),measurement,n_jobs)
-            data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
-            data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            # data_gradient.extend(grad_output[0])
-            # data_loss += (grad_output[1])
+            # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
+            # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
+            data_gradient.extend(grad_output[0])
+            data_loss += (grad_output[1])
             image = grad_output[2]
             new_shape = resolution.copy()
             if multichannel:
@@ -1570,8 +1570,8 @@ class DynamicMediumEstimator(object):
     #     return dv
 
     def compute_direct_derivative(self, dynamic_solver):
-        for ind, medium_estimator in enumerate(self._dynamic_medium_estimator):
-            medium_estimator.compute_direct_derivative(dynamic_solver[ind])
+        for solver, medium_estimator in zip(dynamic_solver,self._dynamic_medium_estimator):
+            medium_estimator.compute_direct_derivative(solver)
 
     def get_bounds(self):
         bounds = []

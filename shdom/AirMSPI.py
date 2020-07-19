@@ -9,7 +9,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import pymap3d
 from ipywidgets import widgets
 import IPython.display as Disp
-
+import scipy.ndimage.measurements as sci
 
 
 
@@ -83,7 +83,6 @@ class AirMSPIMeasurements(shdom.DynamicMeasurements):
         for ax, image in zip(axarr, images):
             image -= image.min()
             ax.imshow(image / image.max())
-
 
     def save_airmspi_measurements(self, directory):
         """
@@ -666,8 +665,8 @@ class AirMSPIMeasurementsv3(shdom.DynamicMeasurements):
             self._sun_azimuth_list = sun_azimuth_list
             self._sun_zenith_list = sun_zenith_list
 
-    def load_from_hdf(self, data_dir, region_of_interest=[1500, 1700, 1500, 1700],
-                      valid_wavelength=[355, 380, 445, 470, 555, 660, 865, 935], type='Radiance'):
+    def load_from_hdf(self, data_dir, region_of_interest,
+                      valid_wavelength=[355, 380, 445, 470, 555, 660, 865, 935], sensor_type='Radiance', cloud_type='Dynamic'):
 
         assert np.array(region_of_interest).shape[-1] == 4, 'region of interest should be list of size 4: ' \
                                              '[pixel_x_start, pixel_x_end,pixel_y_start, pixel_y_end]'
@@ -681,11 +680,11 @@ class AirMSPIMeasurementsv3(shdom.DynamicMeasurements):
         paths = sorted(glob.glob(data_dir + '/' + format_))
         assert len(paths) > 0, 'there are no hdf files in the given directory, try to add ../ at the beginning'
         self._paths = paths
-        self._type = type
+        self._sensor_type = sensor_type
         self._valid_wavelength = valid_wavelength
         self.set_valid_wavelength_index()
         self.set_region_of_interest(region_of_interest)
-        self.set_camera()
+        self.set_camera(cloud_type)
         self.set_wavelengths()
         self.set_times()
         self.set_images()
@@ -708,7 +707,7 @@ class AirMSPIMeasurementsv3(shdom.DynamicMeasurements):
     def set_valid_wavelength_index(self):
         AirMSPI_wavelength = [355, 380, 445, 470, 470, 470, 555, 660, 660, 660, 865, 865, 865, 935]
         self._valid_wavelength_index = np.array(list(map(lambda wl: wl in self._valid_wavelength, AirMSPI_wavelength)))
-        if self._type == 'Radiance':
+        if self._sensor_type == 'Radiance':
             self._valid_wavelength_index[[4, 5, 8, 9, 11, 12]] = False
 
     def get_general_info(self, f):
@@ -727,7 +726,7 @@ class AirMSPIMeasurementsv3(shdom.DynamicMeasurements):
 
         return general_info
 
-    def build_projection(self, f,region_of_interest):
+    def build_projection(self, f,region_of_interest,cloud_translation_x, cloud_translation_y):
 
         channels_data_ancillary = f['HDFEOS']['GRIDS']['Ancillary']['Data Fields']
         latitude = np.array(channels_data_ancillary['Latitude'])
@@ -737,6 +736,7 @@ class AirMSPIMeasurementsv3(shdom.DynamicMeasurements):
         elevation = np.full(longitude.shape, 0)
 
         resolution = list(elevation.shape)
+
         # -------------- Registration to 20 km altitude -------------
         # LLA(Latitude - Longitude - Altitude) to Flat surface(meters)
         airmspi_flight_altitude = 20.0  # km
@@ -758,28 +758,49 @@ class AirMSPIMeasurementsv3(shdom.DynamicMeasurements):
         mu = np.cos(theta)
         phi = np.deg2rad(np.array(channels_data['View_azimuth'])
                          [region_of_interest[0]:region_of_interest[1], region_of_interest[2]:region_of_interest[3]])
-
-        xTranslation = airmspi_flight_altitude * np.tan(theta) * np.cos(phi)  # x - North
-        yTranslation = airmspi_flight_altitude * np.tan(theta) * np.sin(phi)  # Y - East
+        I = np.array(channels_data['I'][region_of_interest[0]:region_of_interest[1],
+                     region_of_interest[2]:region_of_interest[3]])
+        cloud_com_x, cloud_com_y = self.center_of_mass(I,flat_earth_pos[0],flat_earth_pos[1])
+        self._ground_x.append(-cloud_com_x +flat_earth_pos[0])
+        self._ground_y.append(-cloud_com_y + flat_earth_pos[1])
+        xTranslation = airmspi_flight_altitude * np.tan(theta) * np.cos(phi) - cloud_com_x # X - North
+        yTranslation = airmspi_flight_altitude * np.tan(theta) * np.sin(phi) - cloud_com_y # Y - East
 
         x = flat_earth_pos[0] + xTranslation
         y = flat_earth_pos[1] + yTranslation
         z = np.full(resolution, airmspi_flight_altitude)
 
-        # x -= self._relative_coordinates[0]
-        # y -= self._relative_coordinates[1]
-        # z -= self._relative_coordinates[2]
         return shdom.Projection(x=x.ravel('F'), y=y.ravel('F'), z=z.ravel('F'), mu=mu.ravel('F'), phi=phi.ravel('F'),
                                 resolution=resolution)
 
-    def set_camera(self):
+    def center_of_mass(self, I, x,y):
+        com_x = np.sum(I * x) / np.sum(I)
+        com_y = np.sum(I * y) / np.sum(I)
+        return com_x, com_y
+
+    def set_camera(self, cloud_type):
         projections = shdom.MultiViewProjection()
         self._relative_coordinates = None
-        for path, roi in zip(self._paths,self._region_of_interest):
+        self._ground_x = []
+        self._ground_y = []
+        for path, roi, cloud_translation_x, cloud_translation_y in zip(self._paths,self._region_of_interest):
             f = h5py.File(path, 'r')
-            projection = self.build_projection(f,roi)
+            projection = self.build_projection(f,roi,cloud_translation_x, cloud_translation_y)
             projections.add_projection(projection)
-        self._camera = shdom.DynamicCamera(shdom.RadianceSensor(), projections)
+
+        centered_projections = shdom.MultiViewProjection()
+        for projection in projections.projection_list:
+            projection._x -= projections.x.min()
+            projection._y -= projections.y.min()
+            centered_projections.add_projection(projection)
+        if self._type == 'Radiance':
+            sensor = shdom.RadianceSensor()
+        else:
+            NotImplemented()
+        if cloud_type == 'Dynamic':
+            self._camera = shdom.DynamicCamera(sensor, centered_projections)
+        else:
+            self._camera = shdom.Camera(sensor, centered_projections)
 
     def set_wavelengths(self):
         first = True
@@ -918,62 +939,7 @@ class AirMSPIMeasurementsv3(shdom.DynamicMeasurements):
                 y = np.vstack((y, np.full(4, position_y, dtype=np.float32)))
                 z = np.vstack((z, np.full(4, position_z, dtype=np.float32)))
         ax.quiver(x, y, z, u, v, w, length=length, pivot='tail')
-        x = self.camera.projection.projection_list[0].x[0]
-        y = self.camera.projection.projection_list[0].y[0]
-        z = self.camera.projection.projection_list[0].z[0]
-        u = np.cos(np.deg2rad(270))
-        v = np.sin(np.deg2rad(270))
-        w=0
-        ax.quiver(x, y, z, u, v, w, length=length*10, pivot='tail',color='r')
 
-    def plot2(self, ax, xlim, ylim, zlim, length=0.1):
-        """
-        Plot the cameras and their orientation in 3D space using matplotlib's quiver.
-
-        Parameters
-        ----------
-        ax: matplotlib.pyplot.axis
-           and axis for the plot
-        xlim: list
-            [xmin, xmax] to set the domain limits
-        ylim: list
-            [ymin, ymax] to set the domain limits
-        zlim: list
-            [zmin, zmax] to set the domain limits
-        length: float, default=0.1
-            The length of the quiver arrows in the plot
-
-        Notes
-        -----
-        The axis are in the camera coordinates
-        """
-        # ax.set_aspect('equal')
-        ax.set_xlim(*xlim)
-        ax.set_ylim(*ylim)
-        ax.set_zlim(*zlim)
-        first = True
-        for projection in self.camera.projection.projection_list:
-            position_x = projection.x.reshape(projection.resolution)
-            position_y = projection.y.reshape(projection.resolution)
-            position_z = projection.z.reshape(projection.resolution)
-            mu = -projection.mu.reshape(projection.resolution)
-            phi = np.pi + projection.phi.reshape(projection.resolution)
-            if first:
-                u = np.sqrt(1 - mu ** 2) * np.cos(phi)
-                v = np.sqrt(1 - mu ** 2) * np.sin(phi)
-                w = mu
-                x = position_x
-                y = position_y
-                z = position_z
-                first = False
-            else:
-                u = np.vstack((u, np.sqrt(1 - mu ** 2) * np.cos(phi)))
-                v = np.vstack((v, np.sqrt(1 - mu ** 2) * np.sin(phi)))
-                w = np.vstack((w, mu))
-                x = np.vstack((x, position_x))
-                y = np.vstack((y, position_y))
-                z = np.vstack((z, position_z))
-        ax.quiver(x, y, z, u, v, w, length=length, pivot='tail')
 
     def lla2flat(self, lla, llo, psio, href):
         '''

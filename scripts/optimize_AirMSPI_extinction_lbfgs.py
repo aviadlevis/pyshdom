@@ -201,7 +201,7 @@ class OptimizationScript(object):
 
         Parameters
         ----------
-        measurements: shdom.Measurements
+        measurements: shdom.AirMSPIMeasurements
             The acquired measurements.
         ground_truth: shdom.Scatterer
             The ground truth scatterer
@@ -215,21 +215,8 @@ class OptimizationScript(object):
         wavelength = measurements.wavelength
 
         # Define the grid for reconstruction
-        # extinction_grid = albedo_grid = phase_grid = self.cloud_generator.get_grid()
-        x_min =  0
-        x_max = 5
-        dx = np.round((x_max - x_min) / 40, 10)
-        x = np.arange(x_min, x_max, dx)
 
-        y_min = 40
-        y_max = 50
-        dy = np.round((y_max - y_min) / 40, 10)
-        y = np.arange(y_min, y_max, dy)
-
-        z = np.linspace(0, 2, 40)
-        grid = shdom.Grid(x=x,
-                          y=y, z=z)
-        extinction_grid = albedo_grid = phase_grid = grid
+        extinction_grid = albedo_grid = phase_grid = shdom.Grid(bounding_box=measurements.bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
         grid = extinction_grid + albedo_grid + phase_grid
 
         # Find a cloud mask for non-cloudy grid points
@@ -356,7 +343,7 @@ class OptimizationScript(object):
         """
         self.parse_arguments()
 
-        measurements = shdom.AirMSPIMeasurementsv3()
+        measurements = shdom.AirMSPIMeasurements()
         measurements.load_airmspi_measurements(self.args.input_dir)
 
         # Initialize a Medium Estimator

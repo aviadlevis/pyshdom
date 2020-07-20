@@ -124,7 +124,7 @@ class OptimizationScript(object):
                             action='store_true',
                             help='Use the ground-truth phase reconstruction.')
         parser.add_argument('--radiance_threshold',
-                            default=[0.00],
+                            default=[0.01],
                             nargs='+',
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
@@ -191,7 +191,7 @@ class OptimizationScript(object):
         if not isinstance(wavelength,list):
             wavelength = [wavelength]
         # Define the grid for reconstruction
-        extinction_grid = albedo_grid = phase_grid = self.cloud_generator.get_grid_from_measurements(measurements)
+        extinction_grid = albedo_grid = phase_grid = shdom.Grid(bounding_box=measurements.bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
         grid = extinction_grid
 
         if self.args.assume_moving_cloud:
@@ -202,7 +202,7 @@ class OptimizationScript(object):
 
         # Find a cloud mask for non-cloudy grid points
         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.2,
+        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.75,
                             time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
                             vx_max = 10, vy_max=10, gt_velocity = cloud_velocity)
         show_mask=1
@@ -253,7 +253,6 @@ class OptimizationScript(object):
             writer.monitor_loss()
             writer.monitor_shdom_iterations()
             writer.monitor_images(measurements=measurements, ckpt_period=-1)
-            # writer.monitor_time_smoothness()
 
             # save parse_arguments
             self.save_args(log_dir)
@@ -276,7 +275,7 @@ class OptimizationScript(object):
         """
         self.parse_arguments()
 
-        measurements = shdom.AirMSPIMeasurementsv3()
+        measurements = shdom.AirMSPIDynamicMeasurements()
         measurements.load_airmspi_measurements(self.args.input_dir)
 
         # Initialize a Medium Estimator

@@ -213,6 +213,8 @@ class OptimizationScript(object):
             A medium estimator object which defines the optimized parameters.
         """
         wavelength = measurements.wavelength
+        if not isinstance(wavelength, list):
+            wavelength = [wavelength]
 
         # Define the grid for reconstruction
 
@@ -223,12 +225,11 @@ class OptimizationScript(object):
 
         carver = shdom.SpaceCarver(measurements)
         mask = carver.carve(grid, agreement=0.7, thresholds=self.args.radiance_threshold)
-        # mask._data = np.zeros(mask._data.shape).astype(bool)
-        # mask._data[5,5,5] = 1
-        show_mask = 1
-        if show_mask:
-            a = (mask.data).astype(int)
-            shdom.cloud_plot(a)
+
+        # show_mask = 1
+        # if show_mask:
+        #     a = (mask.data).astype(int)
+        #     shdom.cloud_plot(a)
 
         # Define the known albedo and phase: either ground-truth or specified, but it is not optimized.
         if self.args.use_forward_albedo is False or self.args.use_forward_phase is False:
@@ -283,33 +284,6 @@ class OptimizationScript(object):
             # save parse_arguments
             self.save_args(log_dir)
         return writer
-
-    def load_forward_model(self, input_directory):
-        """
-        Load the ground-truth medium, rte_solver and measurements which define the forward model
-
-        Parameters
-        ----------
-        input_directory: str
-            The input directory where the forward model is saved
-
-        Returns
-        -------
-        ground_truth: shdom.OpticalScatterer
-            The ground truth scatterer
-        rte_solver: shdom.RteSolverArray
-            The rte solver with the numerical and scene parameters
-        measurements: shdom.Measurements
-            The acquired measurements
-        """
-        # Load forward model and measurements
-        medium, rte_solver, measurements = shdom.load_forward_model(input_directory)
-
-        # Get optical medium ground-truth
-        ground_truth = medium.get_scatterer(self.scatterer_name)
-        if isinstance(ground_truth, shdom.MicrophysicalScatterer):
-            ground_truth = ground_truth.get_optical_scatterer(measurements.wavelength)
-        return ground_truth, rte_solver, measurements
 
     def get_rte_solver(self,measurements, medium_estimator):
         scene_params_list = []

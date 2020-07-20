@@ -711,3 +711,8 @@ class AirMSPIDynamicMeasurements(AirMSPIMeasurements):
             pixels = np.concatenate(pixels, axis=-2)
             return pixels
 
+    @property
+    def time_list(self):
+        return self._time_list
+
+

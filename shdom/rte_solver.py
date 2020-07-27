@@ -832,7 +832,7 @@ class RteSolver(object):
         -------
         output_arguments: tuple,
             A tuple containing all the output arguments, see: update_solution_arguments().
-        """  
+        """
         output_arguments = core.solution_iterations(
             uniform_sfc_brdf=self._uniform_sfc_brdf,
             sfc_brdf_do=self._sfc_brdf_do,
@@ -1112,7 +1112,7 @@ class RteSolverArray(object):
         if solver_list is not None:
             for solver in solver_list:
                 self.add_solver(solver)
-                
+
     def set_medium(self, medium):
         """
         Set the optical medium properties for all rte_solvers within the list.

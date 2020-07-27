@@ -203,13 +203,15 @@ class OptimizationScript(object):
         # Define the grid for reconstruction
         if self.args.use_forward_grid:
             dynamic_grid = []
-            for i in range(ground_truth.num_scatterers):
-                dynamic_grid.append(ground_truth.get_extinction()[i].grid)
+            for temporary_scatterer in ground_truth._temporary_scatterer_list:
+                dynamic_grid.append(temporary_scatterer.scatterer.grid)
             grid = dynamic_grid[0]
             grid = shdom.Grid(x = grid.x - grid.xmin, y = grid.y - grid.ymin, z = grid.z)
         else:
             extinction_grid = albedo_grid = phase_grid = self.cloud_generator.get_grid()
-            grid = extinction_grid
+            grid = extinction_grid + albedo_grid + phase_grid
+            dynamic_grid = [grid] * ground_truth.num_scatterers
+
 
         if self.args.use_forward_cloud_velocity:
             cloud_velocity = ground_truth.get_velocity()
@@ -220,6 +222,8 @@ class OptimizationScript(object):
         # Find a cloud mask for non-cloudy grid points
         if self.args.use_forward_mask:
             mask_list = ground_truth.get_mask(threshold=0.000001)
+            a = (mask_list[0].data).astype(int)
+            shdom.cloud_plot(a)
         else:
             dynamic_carver = shdom.DynamicSpaceCarver(measurements)
             mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.9,
@@ -244,11 +248,6 @@ class OptimizationScript(object):
             phase = ground_truth.get_phase()
         else:
             NotImplemented()
-        # phase = self.cloud_generator.get_phase(wavelength, phase.grid)
-        # extinction = shdom.DynamicGridDataEstimator(ground_truth.get_extinction(dynamic_grid=dynamic_grid),
-        #                                             init_val=self.args.extinction,
-        #                                             min_bound=1e-5,
-        #                                             max_bound=2e2)
         extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(measurements.wavelength, dynamic_grid),
                                                     min_bound=1e-5,
                                                     max_bound=2e2)
@@ -285,7 +284,7 @@ class OptimizationScript(object):
             writer.save_checkpoints(ckpt_period=20 * 60)
             writer.monitor_loss()
             writer.monitor_shdom_iterations()
-            writer.monitor_images(measurements=measurements, ckpt_period=5 * 60)
+            writer.monitor_images(measurements=measurements, ckpt_period=1 * 60)
             # writer.monitor_time_smoothness()
 
             # Compare estimator to ground-truth
@@ -328,7 +327,7 @@ class OptimizationScript(object):
         # Get optical medium ground-truth
         dynamic_scatterer = dynamic_medium.get_dynamic_scatterer()
         if dynamic_scatterer.type == 'MicrophysicalScatterer':
-            ground_truth = dynamic_scatterer.get_dynamic_optical_scatterer(measurements.wavelength)
+            ground_truth = dynamic_scatterer.get_dynamic_optical_scatterer(dynamic_medium.wavelength)
         else:
             ground_truth=dynamic_scatterer
         return ground_truth, dynamic_solver, measurements

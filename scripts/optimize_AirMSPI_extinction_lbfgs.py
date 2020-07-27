@@ -213,8 +213,8 @@ class OptimizationScript(object):
             A medium estimator object which defines the optimized parameters.
         """
         wavelength = measurements.wavelength
-        if not isinstance(wavelength, list):
-            wavelength = [wavelength]
+        # if not isinstance(wavelength, list):
+        #     wavelength = [wavelength]
 
         # Define the grid for reconstruction
 

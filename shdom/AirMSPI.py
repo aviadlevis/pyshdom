@@ -362,6 +362,7 @@ class AirMSPIMeasurements(shdom.Measurements):
         """
 
         projections = self.get_projections_from_data()
+        self._projections = projections
         if self._sensor_type == 'Radiance':
             sensor = shdom.RadianceSensor()
         else:
@@ -474,7 +475,7 @@ class AirMSPIMeasurements(shdom.Measurements):
         ax.set_ylim(*ylim)
         ax.set_zlim(*zlim)
         first = True
-        for projection in self.camera.projection.projection_list:
+        for projection in self._projections.projection_list:
             position_x = projection.x.reshape(projection.resolution)[[0, -1, 0, -1], [0, 0, -1, -1]]
             position_y = projection.y.reshape(projection.resolution)[[0, -1, 0, -1], [0, 0, -1, -1]]
             position_z = projection.z.reshape(projection.resolution)[[0, -1, 0, -1], [0, 0, -1, -1]]
@@ -669,6 +670,7 @@ class AirMSPIDynamicMeasurements(AirMSPIMeasurements):
         """
 
         projections = self.get_projections_from_data()
+        self._projections = projections
         if self._sensor_type == 'Radiance':
             sensor = shdom.RadianceSensor()
         else:

@@ -5,6 +5,7 @@ Dynamic_cloud related objects used for time dependant cloud changing.
 
 import warnings
 from collections import OrderedDict
+from joblib import Parallel, delayed
 import scipy.ndimage as sci
 import numpy as np
 import time, os, copy, shutil
@@ -94,7 +95,7 @@ def load_dynamic_forward_model(directory):
 class TemporaryScatterer(object):
     # TODO
     def __init__(self, scatterer, time=0.0):
-        assert isinstance(scatterer,shdom.Scatterer) #check if time is a number
+        assert isinstance(scatterer,shdom.Scatterer) or isinstance(scatterer, shdom.MultispectralScatterer) #check if time is a number
         super().__init__()
         self._time = float(time)
         self._scatterer = scatterer
@@ -106,8 +107,13 @@ class TemporaryScatterer(object):
             # if scatterer.num_wavelengths > 0:
             #     self.add_mie(scatterer.mie[scatterer.wavelength])
             self._type = 'MicrophysicalScatterer'
+        elif isinstance(scatterer,shdom.MultispectralScatterer):
+            # super().__init__(lwc=scatterer.lwc, reff=scatterer.reff, veff=scatterer.veff)
+            # if scatterer.num_wavelengths > 0:
+            #     self.add_mie(scatterer.mie[scatterer.wavelength])
+            self._type = 'MultispectralScatterer'
         else:
-            assert 'Unknown Scatterer type'
+            assert False, 'Unknown Scatterer type'
 
     def get_scatterer(self):
         return self._scatterer
@@ -175,31 +181,19 @@ class DynamicScatterer(object):
             self._num_scatterers += 1
             self._temporary_scatterer_list.append(temporary_scatterer)
             self._time_list.append(temporary_scatterer.time)
-            a = len(self._time_list)
-            b = len(set(self._time_list))
             assert len(self._time_list) == len(set(self._time_list)), \
                 ' Dynamic Scatterer is already defined for time = {}'.format(temporary_scatterer.time)
 
     def get_dynamic_optical_scatterer(self, wavelength):
         scatterer_list = []
-        if isinstance(wavelength, list):
-            NotImplemented()
+
         for temporary_scatterer in self._temporary_scatterer_list:
 
             if self.type == 'MicrophysicalScatterer':
-                scatterer_list.append(TemporaryScatterer(temporary_scatterer.get_scatterer().get_optical_scatterer(wavelength),temporary_scatterer.time))
-            # elif self.type == 'OpticalScatterer':
-            #     if isinstance(wavelength, list):
-            #         scatterer_list.append( [
-            #             shdom.OpticalScatterer(wl, temporary_scatterer.get_scatterer().extinction(wl), temporary_scatterer.get_scatterer().albedo(wl), temporary_scatterer.get_scatterer().phase(wl)) for
-            #             wl in wavelength
-            #         ])
-            #         scatterer_list = shdom.MultispectralScatterer(scatterer_list)
-            #     else:
-            #         scatterer_list = shdom.OpticalScatterer(
-            #             wavelength, temporary_scatterer.get_scatterer().extinction(wavelength), temporary_scatterer.get_scatterer().albedo(wavelength),
-            #             temporary_scatterer.get_scatterer().phase(wavelength)
-            #         )
+                scatterer_list.append(TemporaryScatterer(temporary_scatterer.scatterer.get_optical_scatterer(wavelength),temporary_scatterer.time))
+            elif self.type== 'OpticalScatterer' or self._type == 'MultispectralScatterer':
+                scatterer_list.append(
+                    TemporaryScatterer(temporary_scatterer.scatterer, temporary_scatterer.time))
             else:
                 assert 'Unknown Scatterer type'
 
@@ -285,12 +279,19 @@ class DynamicScatterer(object):
             A boolean mask with True for dense voxels and False for optically thin regions.
         """
         first_mask = True
-        for temporal_scatterer in self._temporary_scatterer_list:
-            scatterer = temporal_scatterer.get_scatterer()
+        for temporal_scatterer in self.temporary_scatterer_list:
+            scatterer = temporal_scatterer.scatterer
             if self._type == 'MicrophysicalScatterer':
                 mask = scatterer.lwc.data > threshold
             elif self._type == 'OpticalScatterer':
                 mask = scatterer.extinction.data > threshold
+            elif self._type == 'MultispectralScatterer':
+                mask = None
+                for _, optical_scatterer in scatterer.scatterer.items():
+                    if mask is None:
+                        mask = optical_scatterer.extinction.data > threshold
+                    else:
+                        mask = (optical_scatterer.extinction.data > threshold) | mask
             else:
                 assert 'Scatterer type is not supported'
             if first_mask:
@@ -310,8 +311,8 @@ class DynamicScatterer(object):
         else:
             assert 'Scatterer type is not supported'
         albedo_list = []
-        for temporal_scatterer in dynamic_scatterer._temporary_scatterer_list:
-            scatterer = temporal_scatterer.get_scatterer()
+        for temporal_scatterer in dynamic_scatterer.temporary_scatterer_list:
+            scatterer = temporal_scatterer.scatterer
             albedo_list.append(scatterer.albedo)
         return albedo_list
 
@@ -323,7 +324,7 @@ class DynamicScatterer(object):
         else:
             assert 'Scatterer type is not supported'
         phase_list = []
-        for temporal_scatterer in dynamic_scatterer._temporary_scatterer_list:
+        for temporal_scatterer in dynamic_scatterer.temporary_scatterer_list:
             scatterer = temporal_scatterer.get_scatterer()
             phase_list.append(scatterer.phase)
         return phase_list
@@ -336,7 +337,7 @@ class DynamicScatterer(object):
         else:
             assert 'Scatterer type is not supported'
         extinction_list = []
-        for i, temporal_scatterer in enumerate(dynamic_scatterer._temporary_scatterer_list):
+        for i, temporal_scatterer in enumerate(dynamic_scatterer.temporary_scatterer_list):
             scatterer = temporal_scatterer.get_scatterer()
             data = scatterer.extinction.data
             grid = scatterer.extinction.grid
@@ -403,10 +404,6 @@ class DynamicScatterer(object):
 
         return veff_list, grid_list
 
-
-    def get_temporary_scatterer_list(self):
-        return self._temporary_scatterer_list
-
     def __getitem__(self, val):
         return self._temporary_scatterer_list[val]
 
@@ -428,10 +425,8 @@ class DynamicScatterer(object):
 
     @property
     def temporary_scatterer_list(self):
-        if self.num_scatterer == 0:
+        if self.num_scatterers == 0:
             return None
-        if self.num_scatterer == 1:
-            return self._temporary_scatterer_list[0]
         else:
             return self._temporary_scatterer_list
 
@@ -441,19 +436,19 @@ class DynamicMedium(object):
     def __init__(self, dynamic_scatterer=None, air=None):
         self._num_mediums = 0
         self._wavelength = []
-        self._dynamic_medium = []
+        self._medium_list = []
         self._time_list = []
         self._dynamic_scatterer = None
         if dynamic_scatterer is not None and air is not None:
-            self.set_dynamic_medium(dynamic_scatterer,air)
+            self.set_medium_list(dynamic_scatterer,air)
 
-    def set_dynamic_medium(self, dynamic_scatterer, air):
+    def set_medium_list(self, dynamic_scatterer, air):
         assert isinstance(dynamic_scatterer,DynamicScatterer) #and (isinstance(air,shdom.Scatterer) or isinstance(air,shdom.MultispectralScatterer))
         self._num_mediums = 0
-        self._dynamic_medium = []
+        self._medium_list = []
         self._time_list = []
         self._dynamic_scatterer = dynamic_scatterer
-        temporary_scatterer_list = dynamic_scatterer.get_temporary_scatterer_list()
+        temporary_scatterer_list = dynamic_scatterer.temporary_scatterer_list
         for temporary_scatterer, time in zip(temporary_scatterer_list, dynamic_scatterer.time_list):
             scatterer = temporary_scatterer.get_scatterer()
             first_scatterer = True if self._num_mediums == 0 else False
@@ -461,21 +456,18 @@ class DynamicMedium(object):
                 self._wavelength = scatterer.wavelength
             else:
                 assert np.allclose(self.wavelength,
-                                   scatterer.wavelength), ' medium wavelength {} differs from dynamic_scatterers wavelength {}'.format(
+                                   scatterer.wavelength), 'medium wavelength {} differs from dynamic_scatterers wavelength {}'.format(
                     self.wavelength, scatterer.wavelength)
             atmospheric_grid = scatterer.grid + air.grid
             atmosphere = shdom.Medium(atmospheric_grid)
-            atmosphere.add_scatterer(scatterer, name='cloud')
+            atmosphere.add_scatterer(scatterer, name='cloud_at_time_{}'.format(time))
             atmosphere.add_scatterer(air, name='air')
-            self._dynamic_medium.append(atmosphere)
+            self._medium_list.append(atmosphere)
             self._num_mediums += 1
             self._time_list.append(time)
 
     def get_dynamic_scatterer(self):
         return self._dynamic_scatterer
-
-    def get_dynamic_medium(self):
-        return self._dynamic_medium
 
     def add_medium(self, medium):
         """
@@ -495,10 +487,10 @@ class DynamicMedium(object):
                                medium.wavelength), ' medium wavelength {} differs from scatterer wavelength {}'.format(
                 self.wavelength, medium.wavelength)
         self._num_mediums += 1
-        self._dynamic_medium.append(medium)
+        self._medium_list.append(medium)
 
     def __getitem__(self, val):
-        return self._dynamic_medium[val]
+        return self._medium_list[val]
 
     def save(self, path):
         """
@@ -544,22 +536,20 @@ class DynamicMedium(object):
         return self._time_list
 
     @property
-    def dynamic_medium(self):
+    def medium_list(self):
         if self.num_mediums == 0:
             return None
-        if self.num_mediums == 1:
-            return self._dynamic_medium
+        else:
+            return self._medium_list
+
+    @medium_list.setter
+    def medium_list(self, val):
+        assert isinstance(val, list), 'medium_list is not a list'
+        self._medium_list = val
 
 
-    @dynamic_medium.setter
-    def dynamic_medium(self, val):
-        assert isinstance(val, list), 'dynamic_medium is not list'
-        self._dynamic_medium = val
-
-
-class DynamicRteSolver(shdom.RteSolverArray):
+class DynamicRteSolver(object):
     def __init__(self, scene_params=None, numerical_params=None):
-        super().__init__()
         if isinstance(scene_params,list):
             self._scene_params = scene_params
         else:
@@ -568,28 +558,32 @@ class DynamicRteSolver(shdom.RteSolverArray):
             self._numerical_params = numerical_params
         else:
             self._numerical_params = [numerical_params]
-        # self._num_stokes = None
+        self._solver_array_list = []
         self._dynamic_medium = None
+        self._wavelength = []
+        self._maxiters = 0
 
     def set_dynamic_medium(self, dynamic_medium):
         assert isinstance(dynamic_medium, DynamicMedium) or isinstance(dynamic_medium, DynamicMediumEstimator), ' dynamic_medium type is wrong'
         self._dynamic_medium = dynamic_medium
-        self._solver_list = []
+        self._solver_array_list = []
         if isinstance(dynamic_medium.wavelength,list):
             self._wavelength = dynamic_medium.wavelength
         else:
             self._wavelength = [dynamic_medium.wavelength]
         assert len(self._wavelength)==len(self._scene_params)==len(self._numerical_params)
-        # assert set(self._wavelength)==set([self._scene_params,self._numerical_params.wavelength])
-        dynamic_medium_list = dynamic_medium.get_dynamic_medium()
-        for scene_params, numerical_params in zip(self._scene_params, self._numerical_params):
-            for medium in dynamic_medium_list:
+        medium_list = dynamic_medium.medium_list
+        for medium in medium_list:
+            medium_solver_list = []
+            for scene_params, numerical_params in zip(self._scene_params, self._numerical_params):
                 rte_solver = shdom.RteSolver()
                 rte_solver.set_scene(scene_params)
                 rte_solver.set_numerics(numerical_params)
-                if medium is not None:
-                    rte_solver.set_medium(medium)
-                self.add_dynamic_solver(rte_solver)
+                medium_solver_list.append(rte_solver)
+
+            solver_array = shdom.RteSolverArray(medium_solver_list)
+            solver_array.set_medium(medium)
+            self._solver_array_list.append(solver_array)
 
 
     def replace_dynamic_medium(self, dynamic_medium):
@@ -600,52 +594,222 @@ class DynamicRteSolver(shdom.RteSolverArray):
             wavelength = dynamic_medium.wavelength
         else:
             wavelength = [dynamic_medium.wavelength]
-        dynamic_medium_list = dynamic_medium.get_dynamic_medium()
-        # multispectral_solvers_list = np.reshape(self.solver_list,
-        #                                         (len(self.wavelength), -1)).tolist()
-        # for solver_list in multispectral_solvers_list:
-        #     for rte_solver, projection in zip(solver_list, self.projection.projection_list):
-        multispectral_solvers_list = np.reshape(self.solver_list, (len(wavelength),-1)).T.tolist()
-        assert len(multispectral_solvers_list)==len(dynamic_medium_list)
-        for solver_list,medium in zip(multispectral_solvers_list,dynamic_medium_list):
-            # for projection in self.projection.projection_list:
-            rte_solver = shdom.RteSolverArray(solver_list)
-        # for medium, rte_solver  in zip(dynamic_medium_list,self.solver_list):
-            rte_solver.set_medium(medium)
+        assert np.allclose(wavelength, self.wavelength)
+        assert dynamic_medium.num_mediums == self.num_solver_arrays
+        for solver_array, medium in zip(self.solver_array_list, dynamic_medium.medium_list):
+            solver_array.set_medium(medium)
 
-    def add_dynamic_solver(self, rte_solver):
+    def get_param_dict(self):
         """
-        Add an rte_solver or solvers to the RteSolverArray
+        Retrieve a dictionary with the solver array parameters
+
+        Returns
+        -------
+        param_dict: dict
+            The parameters dictionary contains: type and a list of scene_params, numerical_params matching all the solvers
+        """
+        param_dict = {}
+        for key, param in self.__dict__.items():
+            if key != '_solver_array_list':
+                param_dict[key] = param
+        return param_dict
+
+    def set_param_dict(self, param_dict):
+        """
+        Set the solver array parameters from a parameter dictionary
 
         Parameters
         ----------
-        rte_solver: RteSolver object or list of RteSolvers or RteSolverArray
-            Add RteSolver or solvers to the RteSolverArray
+        param_dict: dict
+            The parameters dictionary contains: type and a list of scene_params, numerical_params matching all the solvers
         """
+        self._scene_params = param_dict['_scene_params']
+        self._numerical_params = param_dict['_numerical_params']
+        self.set_dynamic_medium(param_dict['_dynamic_medium'])
 
-        if self.type is None:
-            self._type = rte_solver.type
-        else:
-            assert self.type == rte_solver.type, \
-                '[add_solver] Assert: RteSolverArray is of type {} and new solver is of type {}'.format(self.type,
-                                                                                                        rte_solver.type)
+    def save_params(self, path):
+        """
+        Save RteSolverArray parameters to file.
 
-        if isinstance(rte_solver, shdom.RteSolver):
-            self._solver_list.append(rte_solver)
-            self._name.append(rte_solver.name)
-            self._num_solvers += 1
-        else:
-            for solver in rte_solver:
-                self._solver_list.append(solver)
-                self._name.append(solver.name)
-                self._num_solvers += 1
+        Parameters
+        ----------
+        path: str,
+            Full path to file.
+        """
+        file = open(path, 'wb')
+        file.write(pickle.dumps(self.get_param_dict(), -1))
+        file.close()
+
+    def load_params(self, path):
+        """
+        Load RteSolverArray parameters from file.
+
+        Parameters
+        ----------
+        path: str,
+            Full path to file.
+        """
+        file = open(path, 'rb')
+        data = file.read()
+        file.close()
+        params = pickle.loads(data)
+        self.set_param_dict(params)
+
+    def __getitem__(self, val):
+        return self.solver_array_list[val]
+
+    def init_solution(self):
+        Parallel(n_jobs=self.num_solver_arrays, backend="threading")(
+                delayed(solver_array.init_solution, check_pickle=False)()
+                for solver_array in self.solver_array_list)
+
+    def solve(self, maxiter, init_solution=False, verbose=False):
+        """
+        Parallel solving of all solvers.
+
+        Main solver routine. This routine is comprised of two parts:
+          1. Initialization (init_solution method), optional
+          2. Parallel solution iterations (solution_iterations method followed by update_solution_arguments method)
+
+        Parameters
+        ----------
+        maxiter: integer
+            Maximum number of iterations for the iterative solution.
+        init_solution: boolean, default=False
+            If False the solution is initialized according to the existing radiance and source function saved within the RteSolver object (previously computed)
+            If True or no prior solution (I,J fields) exists then an initialization is preformed (part 1.).
+        verbose: boolean
+            True will output solution iteration information into stdout.
+        """
+        # for solver in self.solver_array_list:
+        #     if init_solution or solver.num_iterations == 0:
+        #         solver.init_solution()
+
+        Parallel(n_jobs=self.num_solver_arrays, backend="threading")(
+                delayed(solver_array.solve, check_pickle=False)(
+                    maxiter, init_solution=init_solution, verbose=verbose) for solver_array in self.solver_array_list)
+        #
+        # for solver, arguments in zip(self.solver_list, output_arguments):
+        #     solver.update_solution_arguments(arguments)
+
+        self._maxiters = max([solver_array.num_iterations for solver_array in self.solver_array_list])
 
     @property
     def dynamic_medium(self):
         return self._dynamic_medium
 
+    @property
+    def solver_array_list(self):
+        return self._solver_array_list
 
-class DynamicCamera(shdom.Camera):
+    @property
+    def num_solver_arrays(self):
+        return len(self.solver_array_list)
+
+    @property
+    def num_iterations(self):
+        return self._maxiters
+
+    @property
+    def wavelength(self):
+        if self.num_solver_arrays == 1:
+            return self._wavelength[0]
+        else:
+            return self._wavelength
+
+
+
+    # def add_dynamic_solver(self, rte_solver):
+    #     """
+    #     Add an rte_solver or solvers to the RteSolverArray
+    #
+    #     Parameters
+    #     ----------
+    #     rte_solver: RteSolver object or list of RteSolvers or RteSolverArray
+    #         Add RteSolver or solvers to the RteSolverArray
+    #     """
+    #
+    #     if self.type is None:
+    #         self._type = rte_solver.type
+    #     else:
+    #         assert self.type == rte_solver.type, \
+    #             '[add_solver] Assert: RteSolverArray is of type {} and new solver is of type {}'.format(self.type,
+    #                                                                                                     rte_solver.type)
+    #
+    #     if isinstance(rte_solver, shdom.RteSolver):
+    #         self._solver_list.append(rte_solver)
+    #         self._name.append(rte_solver.name)
+    #         self._num_solvers += 1
+    #     else:
+    #         for solver in rte_solver:
+    #             self._solver_list.append(solver)
+    #             self._name.append(solver.name)
+    #             self._num_solvers += 1
+
+
+class DynamicProjection(shdom.Projection):
+    """
+    A MultiViewProjection object encapsulate several projection geometries for multi-view imaging of a domain.
+
+    Parameters
+    ----------
+    projection_list: list, optional
+        A list of Sensor objects
+    """
+    def __init__(self, projection_list=None):
+        super().__init__()
+        self._num_viewed_medium = 0
+        self._multiview_projection_list = []
+        self._names = []
+        if projection_list:
+            for projection in projection_list:
+                self.add_projection(projection)
+
+    def add_projection(self, projection, name=None):
+        """
+        Add a projection to the projection list
+
+        Parameters
+        ----------
+        projection: Projection object
+            A Projection object to add to the MultiViewProjection
+        name: str, optional
+            An ID for the projection.
+        """
+        # Set a default name for the projection
+        if name is None:
+            name = 'Viewed_Medium_Projections{}'.format(self.num_viewed_medium)
+
+        attributes = ['x', 'y', 'z', 'mu', 'phi']
+
+        if self._num_viewed_medium == 0:
+            for attr in attributes:
+                self.__setattr__('_' + attr, projection.__getattribute__(attr))
+            self._npix = [projection.npix]
+            self._resolution = [projection.resolution]
+            self._names = [name]
+        else:
+            for attr in attributes:
+                self.__setattr__('_' + attr, np.concatenate((self.__getattribute__(attr),
+                                                             projection.__getattribute__(attr))))
+            self._npix.append(projection.npix)
+            self._names.append(name)
+            self._resolution.append(projection.resolution)
+        if not isinstance(projection,shdom.MultiViewProjection):
+            projection = shdom.MultiViewProjection(projection)
+        self._multiview_projection_list.append(projection)
+        self._num_viewed_medium += 1
+
+    @property
+    def multiview_projection_list(self):
+        return self._multiview_projection_list
+
+    @property
+    def num_viewed_medium(self):
+        return self._num_viewed_medium
+
+
+class DynamicCamera(object):
     """
     An DynamicCamera object ecapsulates both sensor and projection for Dynamic camera.
 
@@ -654,12 +818,42 @@ class DynamicCamera(shdom.Camera):
     sensor: shdom.Sensor
         A sensor object
     projection: shdom.Projection
-        A projection geometry
+        A projection geometry list
     """
 
-    def __init__(self, sensor=shdom.Sensor(), projection=shdom.Projection()):
+    def __init__(self, sensor=shdom.Sensor(), dynamic_projection=DynamicProjection()):
         self.set_sensor(sensor)
-        self.set_projection(projection)
+        self.set_dynamic_projection(dynamic_projection)
+
+    def set_dynamic_projection(self, dynamic_projection):
+        """
+        Add a projection.
+
+        Parameters
+        ----------
+        projection: shdom.Projection
+            A projection geomtry
+        """
+        self._dynamic_projection = dynamic_projection
+
+    def set_sensor(self, sensor):
+        """
+        Add a sensor.
+
+        Parameters
+        ----------
+        sensor: shdom.Sensor
+            A sensor object
+
+        Notes
+        -----
+        This method also updates the docstring of the render method according to the specific sensor
+        """
+        self._sensor = sensor
+
+        # Update function docstring
+        if sensor.render.__doc__ is not None:
+            self.render.__func__.__doc__ += sensor.render.__doc__
 
     def render(self, dynamic_solver, n_jobs=1, verbose=0):
         """
@@ -673,26 +867,107 @@ class DynamicCamera(shdom.Camera):
         images=[]
 
         # rte_solver_array = dynamic_solver.get_rte_solver_array()
-        multispectral_solvers_list = np.reshape(dynamic_solver.solver_list, (len(dynamic_solver.wavelength),-1)).T.tolist()
-        assert len(multispectral_solvers_list)==len(self.projection.projection_list)
-        for solver_list,projection in zip(multispectral_solvers_list,self.projection.projection_list):
+
+
+        for solver_array, multiview_projection in zip(dynamic_solver.solver_array_list, self._dynamic_projection.multiview_projection_list):
             # for projection in self.projection.projection_list:
-            rte_solver = shdom.RteSolverArray(solver_list)
-            images.append(self.sensor.render(rte_solver, projection, n_jobs, verbose))
+            images += (self.sensor.render(solver_array, multiview_projection, n_jobs, verbose))
         return images
+
+    # def projection_split(self, n_parts):
+    #     avg = len(self.projection.projection_list) / float(n_parts)
+    #     out = []
+    #     last = 0.0
+    #
+    #     while last < len(self.projection.projection_list):
+    #         out.append(shdom.MultiViewProjection(self.projection.projection_list[int(last):int(last + avg)]))
+    #         last += avg
+    #
+    #     return out
+
+    @property
+    def dynamic_projection(self):
+        return self._dynamic_projection
+
+    @property
+    def sensor(self):
+        return self._sensor
+
+    @property
+    def num_viewed_medium(self):
+        return self.dynamic_projection.num_viewed_medium
 
 
 class DynamicMeasurements(shdom.Measurements):
     def __init__(self, camera=None, images=None, pixels=None, wavelength=None, uncertainties=None, time_list=None):
         super().__init__(camera=camera, images=images, pixels=pixels, wavelength=wavelength, uncertainties=uncertainties)
         assert (images is None) == (time_list is None),'images and time_list have to be None or not'
-        if images is not None and  time_list is not None:
-            assert len(images) == len(time_list), 'images and time_list have to be with the same length'
+        # if images is not None and  time_list is not None:
+            # assert len(images) == len(time_list*camera.projection), 'images and time_list have to be with the same length'
         self._time_list = time_list
+        if camera is not None:
+            self._num_viewed_mediums = camera.num_viewed_medium
+        else:
+            self._num_viewed_mediums = 0
+
+    def split(self):
+        """
+        Split the measurements and projection.
+
+        Parameters
+        ----------
+        n_parts: int
+            The number of parts to split the measurements to
+
+        Returns
+        -------
+        measurements: list
+            A list of measurements each with n_parts
+
+        Notes
+        -----
+        An even split doesnt always exist, in which case some parts will have slightly more pixels.
+        """
+        assert self._num_viewed_mediums > 0
+        pixels = np.array_split(self.pixels, self.num_viewed_mediums)
+        projections = self.camera.dynamic_projection.multiview_projection_list
+        # images = np.array_split(self.images, n_parts)
+        measurements = [shdom.Measurements(
+            camera=shdom.Camera(self.camera.sensor, projection),wavelength=self.wavelength,
+            pixels=pixel) for projection, pixel in zip(projections, pixels)
+        ]
+        return measurements
+
+    def downsample_viewed_mediums(self, new_num_viewed_mediums):
+        assert self.num_viewed_mediums >= new_num_viewed_mediums
+        if new_num_viewed_mediums == self.num_viewed_mediums:
+            return DynamicMeasurements(self.camera, self.images, self.pixels, self.wavelength, self.uncertainties, self.time_list)
+
+        dynamic_projection = shdom.DynamicProjection(self.projection_split(new_num_viewed_mediums))
+        dynamic_camera = shdom.DynamicCamera(self.camera.sensor, dynamic_projection)
+        time_list = np.mean(np.split(self.time_list, new_num_viewed_mediums), 1)
+        return DynamicMeasurements(dynamic_camera, images=self.images, wavelength=self.wavelength,time_list=time_list)
+
+    def projection_split(self, n_parts):
+        projection_list = []
+        for multiview_projection in self.camera.dynamic_projection.multiview_projection_list:
+            projection_list += (multiview_projection.projection_list)
+        avg = len(projection_list) / float(n_parts)
+        out = []
+        last = 0.0
+
+        while last < len(projection_list):
+            out.append(shdom.MultiViewProjection(projection_list[int(last):int(last + avg)]))
+            last += avg
+        return out
 
     @property
     def time_list(self):
         return self._time_list
+
+    @property
+    def num_viewed_mediums(self):
+        return self._num_viewed_mediums
 
 
 class Homogeneous(shdom.CloudGenerator):
@@ -723,19 +998,19 @@ class Homogeneous(shdom.CloudGenerator):
             The updated parser.
         """
         parser.add_argument('--nx',
-                            default=10,
+                            default=20,
                             type=int,
                             help='(default value: %(default)s) Number of grid cell in x (North) direction')
         parser.add_argument('--ny',
-                            default=10,
+                            default=20,
                             type=int,
                             help='(default value: %(default)s) Number of grid cell in y (East) direction')
         parser.add_argument('--nz',
-                            default=10,
+                            default=20,
                             type=int,
                             help='(default value: %(default)s) Number of grid cell in z (Up) direction')
         parser.add_argument('--domain_size',
-                            default=1.0,
+                            default=2.0,
                             type=float,
                             help='(default value: %(default)s) Cubic domain size [km]')
         parser.add_argument('--extinction',
@@ -821,21 +1096,35 @@ class Homogeneous(shdom.CloudGenerator):
         grid: shdom.Grid
             A Grid object for this scatterer
         """
-        time_list = np.asarray(self.args.time_list).reshape((-1, 1))
-        scatterer_velocity_list = np.asarray(self.args.cloud_velocity).reshape((3, -1))
-        assert scatterer_velocity_list.shape[0] == 3 and \
-               (scatterer_velocity_list.shape[1] == time_list.shape[0] or scatterer_velocity_list.shape[1] == 1), \
-            'time_list, scatterer_velocity_list have wrong dimensions'
-        scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T  # km
-        bb = shdom.BoundingBox(0.0, 0.0, 0.0, self.args.domain_size, self.args.domain_size, self.args.domain_size)
-        grid_list = []
-        for scatterer_shift in scatterer_shifts:
-            grid_list.append(shdom.Grid(bounding_box=bb,
-                x=np.linspace(scatterer_shift[1], self.args.nx+ scatterer_shift[0], self.args.nx),
-                       y=np.linspace(scatterer_shift[1], self.args.ny + scatterer_shift[1], self.args.ny),
-                       z=np.linspace(0.1 + scatterer_shift[2], self.args.nz + scatterer_shift[2], self.args.nz)))
-            # grid_list.append(shdom.Grid(bounding_box=bb, nx=self.args.nx + scatterer_shift[0], ny=self.args.ny+ scatterer_shift[1], nz=self.args.nz+ scatterer_shift[2]))
-        return grid_list
+
+        bb = shdom.BoundingBox(0, 0, 0, self.args.domain_size, self.args.domain_size, self.args.domain_size)
+
+        return shdom.Grid(bounding_box=bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
+
+    # def get_grid(self):
+    #     """
+    #     Retrieve the scatterer grid.
+    #
+    #     Returns
+    #     -------
+    #     grid: shdom.Grid
+    #         A Grid object for this scatterer
+    #     """
+    #     time_list = np.asarray(self.args.time_list).reshape((-1, 1))
+    #     scatterer_velocity_list = np.asarray(self.args.cloud_velocity).reshape((3, -1))
+    #     assert scatterer_velocity_list.shape[0] == 3 and \
+    #            (scatterer_velocity_list.shape[1] == time_list.shape[0] or scatterer_velocity_list.shape[1] == 1), \
+    #         'time_list, scatterer_velocity_list have wrong dimensions'
+    #     scatterer_shifts = 1e-3 * time_list * scatterer_velocity_list.T  # km
+    #     bb = shdom.BoundingBox(0.0, 0.0, 0.0, self.args.domain_size, self.args.domain_size, self.args.domain_size)
+    #     grid_list = []
+    #     for scatterer_shift in scatterer_shifts:
+    #         grid_list.append(shdom.Grid(bounding_box=bb,
+    #             x=np.linspace(scatterer_shift[1], self.args.nx+ scatterer_shift[0], self.args.nx),
+    #                    y=np.linspace(scatterer_shift[1], self.args.ny + scatterer_shift[1], self.args.ny),
+    #                    z=np.linspace(0.1 + scatterer_shift[2], self.args.nz + scatterer_shift[2], self.args.nz)))
+    #         # grid_list.append(shdom.Grid(bounding_box=bb, nx=self.args.nx + scatterer_shift[0], ny=self.args.ny+ scatterer_shift[1], nz=self.args.nz+ scatterer_shift[2]))
+    #     return grid_list
 
     def get_extinction(self, wavelength=None, grid_list=None):
         """
@@ -859,6 +1148,7 @@ class Homogeneous(shdom.CloudGenerator):
         The input wavelength is rounded to three decimals.
         """
         if grid_list is None:
+            NotImplemented()
             grid_list = self.get_grid()
         extinction =[]
         if self.args.lwc is None:
@@ -900,6 +1190,7 @@ class Homogeneous(shdom.CloudGenerator):
         The input wavelength is rounded to three decimals.
         """
         if grid_list is None:
+            NotImplemented()
             grid_list = self.get_grid()
         albedo =[]
         # if self.args.lwc is None:
@@ -940,6 +1231,7 @@ class Homogeneous(shdom.CloudGenerator):
         The input wavelength is rounded to three decimals.
         """
         if grid_list is None:
+            NotImplemented()
             grid_list = self.get_grid()
         phase =[]
         # for grid in grid_list:
@@ -973,6 +1265,7 @@ class Homogeneous(shdom.CloudGenerator):
             A GridData object containing liquid water content (g/m^3) on a 3D grid.
         """
         if grid_list is None:
+            NotImplemented()
             grid_list = self.get_grid()
 
         lwc = self.args.lwc
@@ -1004,6 +1297,7 @@ class Homogeneous(shdom.CloudGenerator):
             A GridData object containing the effective radius [microns] on a grid
         """
         if grid_list is None:
+            NotImplemented()
             grid_list = self.get_grid()
 
         reff = self.args.reff
@@ -1035,6 +1329,7 @@ class Homogeneous(shdom.CloudGenerator):
             A GridData object containing the effective radius [microns] on a grid
         """
         if grid_list is None:
+            NotImplemented()
             grid_list = self.get_grid()
 
         veff = self.args.veff
@@ -1382,16 +1677,6 @@ class DynamicScattererEstimator(object):
 
 
 class DynamicMediumEstimator(object):
-    # def __init__(self, dynamic_scatterer=None, air=None):
-    #     self._dynamic_medium_estimator = []
-    #     if dynamic_scatterer is not None and air is not None:
-    #         for scatterer in dynamic_scatterer.get_dynamic_optical_scatterer():
-    #             medium_estimator = shdom.MediumEstimator()
-    #             medium_estimator.add_scatterer(air, 'air')
-    #             medium_estimator.add_scatterer(scatterer, 'cloud')
-    #             medium_estimator.set_grid(scatterer.grid + air.grid)
-    #             self._dynamic_medium_estimator.append(medium_estimator)
-    #     self._wavelength = medium_estimator.wavelength
 
     def __init__(self, dynamic_scatterer_estimator=None, air=None, scatterer_velocity=[0,0,0],
                  loss_type='l2', exact_single_scatter=True, stokes_weights=None):
@@ -1399,7 +1684,7 @@ class DynamicMediumEstimator(object):
         self._wavelength = []
         self._dynamic_medium = []
         self._time_list = []
-        self._dynamic_medium_estimator = []
+        self._medium_list = []
         self._dynamic_scatterer_estimator = dynamic_scatterer_estimator
         self._scatterer_velocity = scatterer_velocity
         if dynamic_scatterer_estimator is not None and air is not None:
@@ -1409,9 +1694,9 @@ class DynamicMediumEstimator(object):
         assert isinstance(dynamic_scatterer_estimator,DynamicScattererEstimator) \
                     and (isinstance(air,shdom.Scatterer) or isinstance(air,shdom.MultispectralScatterer))
         self._num_mediums = 0
-        self._dynamic_medium_estimator = []
+        self._medium_list = []
         self._time_list = []
-        # temporary_scatterer_list = dynamic_scatterer_estimator.get_temporary_scatterer_list()
+        # temporary_scatterer_list = dynamic_scatterer_estimator.temporary_scatterer_list
         for temporary_scatterer, time in zip(dynamic_scatterer_estimator.temporary_scatterer_estimator_list, dynamic_scatterer_estimator.time_list):
             scatterer = temporary_scatterer.get_scatterer()
             first_scatterer = True if self._num_mediums == 0 else False
@@ -1425,12 +1710,9 @@ class DynamicMediumEstimator(object):
             medium = shdom.MediumEstimator(grid=medium_grid, loss_type=loss_type, exact_single_scatter=exact_single_scatter, stokes_weights=stokes_weights)
             medium.add_scatterer(scatterer, name='cloud')
             medium.add_scatterer(air, name='air')
-            self._dynamic_medium_estimator.append(medium)
+            self._medium_list.append(medium)
             self._num_mediums += 1
             self._time_list.append(time)
-
-    def get_dynamic_medium(self):
-        return self._dynamic_medium_estimator
 
     def compute_gradient(self,dynamic_solver, measurements, n_jobs=1, regularization_const=0):
         data_gradient = []
@@ -1438,29 +1720,35 @@ class DynamicMediumEstimator(object):
         images = []
         loss =[]
 
-        resolutions = measurements.camera.projection.resolution
-        split_indices = np.cumsum(measurements.camera.projection.npix[:-1])
-        measurements = measurements.split(split_indices)
-        # if len(self.wavelength)>2:
-        num_channels = len(self.wavelength)
-        multichannel = num_channels > 1
-        multispectral_solvers_list = np.reshape(dynamic_solver.solver_list, (len(self.wavelength), -1)).T.tolist()
+        resolutions = measurements.camera.dynamic_projection.resolution
 
-        for medium_estimator, rte_solver, measurement, resolution in zip(self._dynamic_medium_estimator, multispectral_solvers_list, measurements, resolutions):
+        # split_indices = np.cumsum(measurements.camera.projection.npix[:-1])
+        n_parts = len(self.medium_list)
+        measurements = measurements.split()
+        # if len(self.wavelength)>2:
+        wavelength = self.wavelength
+        if not isinstance(self.wavelength,list):
+            wavelength = [self.wavelength]
+        num_channels = len(wavelength)
+        multichannel = num_channels > 1
+
+        for medium_estimator, rte_solver, measurement, resolution in zip(self.medium_list, dynamic_solver.solver_array_list, measurements, resolutions):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray(rte_solver),measurement,n_jobs)
             # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            data_gradient.extend(grad_output[0])
+            data_gradient.extend(grad_output[0]/ len(measurements))
             data_loss += (grad_output[1])
             image = grad_output[2]
-            new_shape = resolution.copy()
-            if multichannel:
-                new_shape.append(num_channels)
-            images.append(image.reshape(new_shape, order='F'))
-        # loss.append(data_loss / len(measurements))#unit less loss
-        loss.append(data_loss)
+            # resolution = measurement.images.shape
+            # new_shape = resolution.copy()
+            # if multichannel:
+            #     new_shape.append(num_channels)
+            # images.append(image.reshape(resolution, order='F'))
+            images += image
+        loss.append(data_loss / len(measurements))#unit less loss
+        # loss.append(data_loss)
 
-        if regularization_const != 0:
+        if regularization_const != 0 and len(self._medium_list) > 1:
             regularization_loss, regularization_grad = self.compute_gradient_regularization(regularization_const)
             loss.append(regularization_loss)
             state_gradient = np.asarray(data_gradient) + regularization_grad
@@ -1492,7 +1780,7 @@ class DynamicMediumEstimator(object):
             # grid_size = param.grid.nx * param.grid.ny * param.grid.nz
             grid_size = 1
 
-            for scatterer_estimator in self._dynamic_medium_estimator:
+            for scatterer_estimator in self._medium_list:
                 estimated_parameter_stack.append(scatterer_estimator.get_state())
 
             grad = np.empty(shape=(0), dtype=np.float64)
@@ -1500,12 +1788,11 @@ class DynamicMediumEstimator(object):
 
             dynamic_estimated_parameter = np.stack(estimated_parameter_stack, axis=1)
             curr_grad = np.zeros_like(dynamic_estimated_parameter)
+            time = np.array(self.time_list)
             if regularization_type == 'l2':
                 assert curr_grad.shape[1]>1,'cant calculate gradient for 1 image'
-                curr_grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:])
-                curr_grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1])
-                # curr_grad = np.reshape(curr_grad,(-1,), order='F') / dynamic_estimated_parameter.shape[0] \
-                #        / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
+                curr_grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:]) / (time[:-1] - time[1:])
+                curr_grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1]) / (time[1:] - time[:-1])
 
                 norm_const = 1 / grid_size / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
 
@@ -1519,69 +1806,19 @@ class DynamicMediumEstimator(object):
                 NotImplemented()
         return regularization_const * loss, regularization_const * grad
 
-    # def scatterer_velocity_estimate(self):
-    #     estimated_extinction_stack = []
-    #
-    #     # start_x = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.xmin
-    #     # stop_x = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.xmax
-    #     # dx = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dx
-    #     #
-    #     # start_y = self._dynamic_medium_estimator[0].estimators['cloud'].extinction.grid.ymin
-    #     # stop_y = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.ymax
-    #     # dy = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.dy
-    #     #
-    #     # z = self._dynamic_medium_estimator[-1].estimators['cloud'].extinction.grid.z
-    #     # grid = shdom.Grid(x=np.arange(start_x,stop_x,dx),y=np.arange(start_y,stop_y,dy), z=z)
-    #
-    #     delta_list = []
-    #     for medium_estimator in self._dynamic_medium_estimator:
-    #         estimated_extinction_stack.append(medium_estimator.estimators['cloud'].extinction)
-    #         dx = medium_estimator.estimators['cloud'].extinction.grid.dx
-    #         dy = medium_estimator.estimators['cloud'].extinction.grid.dy
-    #         # dz = medium_estimator.estimators['cloud'].extinction.grid.dz
-    #         delta_list.append([dx,dy,1])
-    #
-    #     # dynamic_estimated_extinction = np.stack(estimated_extinction_stack, axis=3)
-    #     min_err = np.inf
-    #     for dv_x in np.arange(-1,1,0.2):
-    #         for dv_y in np.arange(-3,3,0.3):
-    #             shifted_extinction = []
-    #             for extinction, time, delta in zip(estimated_extinction_stack,self._time_list,delta_list):
-    #                 shift = 1e-3 * time * np.array([dv_x, dv_y, 0])  # km
-    #                 # shifted_extinction.append(sci.shift(extinction, -shift, mode='constant',cval=0))
-    #                 grid = shdom.Grid(x=extinction.grid.x + shift[0], y=extinction.grid.y + shift[1], z=extinction.grid.z + shift[2])
-    #                 shifted_extinction.append(extinction.resample(grid).data)
-    #             # shifted_extinction = np.stack(shifted_extinction, axis=3)
-    #             err = 0
-    #             for extinction_i in shifted_extinction:
-    #                 for extinction_j in shifted_extinction:
-    #                     err += np.linalg.norm((extinction_i-extinction_j).reshape(-1,1),ord=1)
-    #             if err < min_err:
-    #                 min_err = err
-    #                 dv = [dv_x, dv_y, 0]
-    #     self._scatterer_velocity = [x - y for x, y in zip(self._scatterer_velocity, dv)]
-    #     for medium_estimator, time in zip(self._dynamic_medium_estimator, self._time_list):
-    #         grid = medium_estimator.estimators['cloud'].extinction.grid
-    #         grid.x -= 1e-3 *dv[0]*time
-    #         grid.y -= 1e-3 *dv[1]*time
-    #         grid = medium_estimator.grid
-    #         grid.x -= 1e-3 *dv[0]*time
-    #         grid.y -= 1e-3 *dv[1]*time
-    #     return dv
-
     def compute_direct_derivative(self, dynamic_solver):
-        for solver, medium_estimator in zip(dynamic_solver,self._dynamic_medium_estimator):
+        for solver, medium_estimator in zip(dynamic_solver,self._medium_list):
             medium_estimator.compute_direct_derivative(solver)
 
     def get_bounds(self):
         bounds = []
-        for scatterer_estimator in self._dynamic_medium_estimator:
+        for scatterer_estimator in self._medium_list:
             bounds.extend(scatterer_estimator.get_bounds())
         return bounds
 
     def get_state(self):
         state = []
-        for scatterer_estimator in self._dynamic_medium_estimator:
+        for scatterer_estimator in self._medium_list:
             state.extend(scatterer_estimator.get_state())
         return state
 
@@ -1595,30 +1832,30 @@ class DynamicMediumEstimator(object):
             The combined state of all the internal estimators
         """
         num_parameters =[]
-        for medium_estimator in self.dynamic_medium_estimator:
+        for medium_estimator in self.medium_list:
             num_parameters.extend(medium_estimator.num_parameters)
         states = np.split(state, np.cumsum(num_parameters[:-1]))
-        for medium_estimator, state in zip(self.dynamic_medium_estimator, states):
+        for medium_estimator, state in zip(self.medium_list, states):
             for (name, estimator) in medium_estimator.estimators.items():
                 estimator.set_state(state)
                 medium_estimator.scatterers[name] = estimator
 
     def get_num_parameters(self):
         num_parameters = []
-        for scatterer_estimator in self._dynamic_medium_estimator:
+        for scatterer_estimator in self._medium_list:
             num_parameters.append(scatterer_estimator.num_parameters)
         return num_parameters
 
     def get_scatterer(self, scatterer_name=None):
-        # dynamic_scatterer_estimator = DynamicScatterer()
-        # for i, medium_estimator in enumerate(self._dynamic_medium_estimator):
-        #     dynamic_scatterer_estimator.add_temporary_scatterer(TemporaryScatterer(medium_estimator.get_scatterer(scatterer_name),time=i))
-        # return dynamic_scatterer_estimator
         return self._dynamic_scatterer_estimator
 
     @property
     def scatterer_velocity (self):
         return self._scatterer_velocity
+
+    @property
+    def medium_list(self):
+        return self._medium_list
 
     @property
     def num_mediums(self):
@@ -1631,10 +1868,6 @@ class DynamicMediumEstimator(object):
     @property
     def wavelength(self):
         return self._wavelength
-
-    @property
-    def dynamic_medium_estimator(self):
-        return self._dynamic_medium_estimator
 
     @property
     def dynamic_scatterer_estimator(self):
@@ -1696,7 +1929,6 @@ class DynamicLocalOptimizer(object):
         """
         assert isinstance(dynamic_solver, shdom.DynamicRteSolver), 'dynamic_solver is not DynamicRteSolver'
         self._rte_solver = dynamic_solver
-
 
     def set_writer(self, writer):
         """
@@ -1793,11 +2025,11 @@ class DynamicLocalOptimizer(object):
         #     'RteSolver has {} solvers, Measurements have {} channels and Medium has {} wavelengths'.format(
         #         self.rte_solver.num_solvers, self.measurements.num_channels, self.medium.num_wavelengths)
 
-        self.rte_solver.replace_dynamic_medium(self.medium)
+        self.rte_solver.set_dynamic_medium(self.medium)
         self.rte_solver.init_solution()
         self.medium.compute_direct_derivative(self.rte_solver)
         self._num_parameters = []
-        for medium in self.medium.get_dynamic_medium():
+        for medium in self.medium.medium_list:
             self._num_parameters.append(medium.num_parameters)
 
     def get_bounds(self):
@@ -2234,7 +2466,7 @@ class DynamicSummaryWriter(object):
     #     extinctions=[]
     #     for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
     #         est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
-    #         for estimator_temporary_scatterer in est_scatterer.get_temporary_scatterer_list():
+    #         for estimator_temporary_scatterer in est_scatterer.temporary_scatterer_list:
     #             extinctions.append(estimator_temporary_scatterer.scatterer.extinction.data)
     #     err=0
     #     for extinction_i in extinctions:
@@ -2291,7 +2523,7 @@ class DynamicSummaryWriter(object):
         for dynamic_scatterer_name, gt_dynamic_scatterer in self._ground_truth.items():
             est_scatterer = self.optimizer.medium.get_scatterer(dynamic_scatterer_name)
             for gt_temporary_scatterer, estimator_temporary_scatterer in \
-                    zip(gt_dynamic_scatterer.get_temporary_scatterer_list(), est_scatterer.temporary_scatterer_estimator_list):
+                    zip(gt_dynamic_scatterer.temporary_scatterer_list, est_scatterer.temporary_scatterer_estimator_list):
                 for parameter_name, parameter in estimator_temporary_scatterer.scatterer.estimators.items():
                     gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
                     est_param = parameter.resample(gt_param.grid).data.flatten()
@@ -2324,7 +2556,7 @@ class DynamicSummaryWriter(object):
                 gt_param_mean = 0
                 est_param_mean = 0
                 for gt_temporary_scatterer, estimator_temporary_scatterer in \
-                        zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                        zip(gt_dynamic_scatterer.temporary_scatterer_list,
                             est_scatterer.temporary_scatterer_estimator_list):
                     gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
                     est_param = getattr(estimator_temporary_scatterer.scatterer, parameter_name).resample(gt_param.grid)
@@ -2354,7 +2586,7 @@ class DynamicSummaryWriter(object):
             parm_scatterer = est_scatterer.temporary_scatterer_estimator_list[0]
             for parameter_name, parameter in parm_scatterer.scatterer.estimators.items():
                 for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
-                        enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                        enumerate(zip(gt_dynamic_scatterer.temporary_scatterer_list,
                                 est_scatterer.temporary_scatterer_estimator_list)):
                     gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
                     with warnings.catch_warnings():
@@ -2406,7 +2638,7 @@ class DynamicSummaryWriter(object):
             parm_scatterer = est_scatterer.temporary_scatterer_estimator_list[0]
             for parameter_name, parameter in parm_scatterer.scatterer.estimators.items():
                 for ind, (gt_temporary_scatterer, estimator_temporary_scatterer) in \
-                        enumerate(zip(gt_dynamic_scatterer.get_temporary_scatterer_list(),
+                        enumerate(zip(gt_dynamic_scatterer.temporary_scatterer_list,
                                       est_scatterer.temporary_scatterer_estimator_list)):
 
                     gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
@@ -2530,6 +2762,8 @@ class DynamicSpaceCarver(object):
 
         if isinstance(measurements.camera.projection, shdom.MultiViewProjection):
             self._projections = measurements.camera.projection.projection_list
+        elif isinstance(measurements.camera.projection, list):
+            self._projections = measurements.camera.projection
         else:
             self._projections = [measurements.camera.projection]
         self._images = measurements.images

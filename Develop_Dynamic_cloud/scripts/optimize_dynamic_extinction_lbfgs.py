@@ -112,6 +112,11 @@ class OptimizationScript(object):
         parser.add_argument('--use_forward_cloud_velocity',
                             action='store_true',
                             help='Use the ground truth cloud velocity.')
+        parser.add_argument('--use_cross_validation',
+                            default=-1,
+                            type=int,
+                            help='Reconstruct on base of all the view-points except mentioned,'
+                                 ' if negative run without cross validation')
         return parser
 
     def medium_args(self, parser):
@@ -248,11 +253,22 @@ class OptimizationScript(object):
             phase = ground_truth.get_phase()
         else:
             NotImplemented()
+        time_list = measurements.time_list
+        cv_index = self.args.use_cross_validation
+        if cv_index >= 0:
+            del dynamic_grid[cv_index]
+            del mask_list[cv_index]
+            del albedo[cv_index]
+            del phase[cv_index]
+            time_list = np.delete(time_list, cv_index)
+
         extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(measurements.wavelength, dynamic_grid),
                                                     min_bound=1e-5,
                                                     max_bound=2e2)
+
+
         kw_optical_scatterer = {"extinction": extinction, "albedo": albedo, "phase": phase}
-        cloud_estimator = shdom.DynamicScattererEstimator(wavelength=wavelength, time_list=measurements.time_list, **kw_optical_scatterer)
+        cloud_estimator = shdom.DynamicScattererEstimator(wavelength=wavelength, time_list=time_list, **kw_optical_scatterer)
         cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)
@@ -285,7 +301,6 @@ class OptimizationScript(object):
             writer.monitor_loss()
             writer.monitor_shdom_iterations()
             writer.monitor_images(measurements=measurements, ckpt_period=1 * 60)
-            # writer.monitor_time_smoothness()
 
             # Compare estimator to ground-truth
             writer.monitor_scatterer_error(estimator_name=self.scatterer_name, ground_truth=ground_truth)
@@ -345,14 +360,6 @@ class OptimizationScript(object):
 
         ground_truth, dynamic_solver, measurements = self.load_forward_model(self.args.input_dir)
 
-        #dynamic_solver load and save problem
-        # scene_params = shdom.SceneParameters(
-        #     wavelength=measurements.wavelength,
-        #     source=shdom.SolarSource(azimuth=65, zenith=135)
-        # )
-        # numerical_params = shdom.NumericalParameters(num_mu_bins=8,num_phi_bins=16)
-        # dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params,numerical_params=numerical_params)
-
         # Add noise (currently only supports AirMSPI noise model)
         if self.args.add_noise:
             measurements.set_noise(shdom.AirMSPINoise())
@@ -360,9 +367,19 @@ class OptimizationScript(object):
         # Initialize a Medium Estimator
         medium_estimator = self.get_medium_estimator(measurements, ground_truth)
 
+        cv_index = self.args.use_cross_validation
+        if cv_index >= 0:
+            cv_ground_truth = ground_truth.pop_temporary_scatterer(cv_index)
+            cv_rte_solver = dynamic_solver.pop_solver(cv_index)
+            cv_measurement, measurements = measurements.get_cross_validation_measurements(cv_index)
+
         # Initialize TensorboardX logger
         writer = self.get_summary_writer(measurements, ground_truth)
-        regularization_const = self.args.reg_const
+        if cv_index >= 0:
+            writer.monitor_cross_validation(cv_measurement=cv_measurement, ckpt_period=-1)
+            writer.monitor_cross_validation_scatterer_error(estimator_name=self.scatterer_name, cv_ground_truth=cv_ground_truth)
+            writer.monitor_cross_validation_scatter_plot(estimator_name=self.scatterer_name, cv_ground_truth=cv_ground_truth, dilute_percent=0.8)
+
 
         # Initialize a LocalOptimizer
         options = {
@@ -373,12 +390,16 @@ class OptimizationScript(object):
             'ftol': self.args.ftol,
         }
         optimizer = shdom.DynamicLocalOptimizer('L-BFGS-B', options=options, n_jobs=self.args.n_jobs,
-                                                regularization_const=regularization_const)
+                                                regularization_const=self.args.reg_const)
+
+
+
         optimizer.set_measurements(measurements)
         optimizer.set_dynamic_solver(dynamic_solver)
         optimizer.set_medium_estimator(medium_estimator)
         optimizer.set_writer(writer)
-
+        if cv_index >= 0:
+            optimizer.set_cross_validation_param(cv_rte_solver, cv_measurement, cv_index)
         # Reload previous state
         if self.args.reload_path is not None:
             optimizer.load_state(self.args.reload_path)

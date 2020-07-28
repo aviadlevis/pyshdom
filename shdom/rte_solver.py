@@ -104,6 +104,42 @@ class LambertianSurface(Surface):
         Print out all the surface parameters.        
         """        
         return super().info + ', albedo: {}'.format(self.albedo)
+
+
+class OceanSurface(Surface):
+    """
+    A Ocean surface, defined by three parameters.
+
+    Parameters
+    ----------
+    wind_speed: float,
+        wind speed at the see level (in m/s) [value not allowed below 0.25 m/s]
+    wind_azimuth: float,
+        wind azimuth at the see level (in rad) [0 2pi]
+    salinity: float,
+        sea salinity (in ppt) [if salinity<0 then 34.3ppt by default]
+    chlorophyll_concentration: float,
+        chlorophyll concentration (in mg/m^3)
+
+    """
+
+    def __init__(self, wind_speed=5, wind_azimuth=0, salinity=-1, chlorophyll_concentration=0.01):
+        super().__init__()
+        self.type = 'Ocean'
+        self.wind_speed = wind_speed
+        self.wind_azimuth = wind_azimuth
+        self.salinity = salinity
+        self.chlorophyll_concentration = chlorophyll_concentration
+        self.ocean_temperature = 298.15
+
+
+    @property
+    def info(self):
+        """
+        Print out all the surface parameters.
+        """
+        return super().info + ', wind speed: {}'.format(self.wind_speed) \
+               + ', chlorophyll concentration: {}'.format(self.chlorophyll_concentration)
     
         
 class NumericalParameters(object):
@@ -422,7 +458,19 @@ class RteSolver(object):
             self._delysfc = 0
             self._nsfcpar = 1
             self._sfcparms = []
-            self._sfcgridparms = []  
+            self._sfcgridparms = []
+        elif scene_params.surface.type == 'Ocean':
+            self._sfctype = 'FO'  # Fixed Ocean
+            self._ocnwindspeed = scene_params.surface.wind_speed
+            self._ocnwpigment= scene_params.surface.chlorophyll_concentration
+            self._ocntemp = scene_params.surface.ground_temperature
+            self._nxsfc = 0
+            self._nysfc = 0
+            self._delxsfc = 0
+            self._delysfc = 0
+            self._nsfcpar = 1
+            self._sfcparms = []
+            self._sfcgridparms = []
         else:
             raise NotImplementedError('Only Lambertian surface is currently supported')
     

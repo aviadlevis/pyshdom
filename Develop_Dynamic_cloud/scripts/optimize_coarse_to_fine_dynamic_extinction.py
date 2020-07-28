@@ -395,6 +395,7 @@ class OptimizationScript(object):
         optimizer.set_measurements(measurements)
         optimizer.set_dynamic_solver(dynamic_solver)
         optimizer.set_medium_estimator(medium_estimator)
+        optimizer.set_Npixels(threshold=self.args.radiance_threshold)
         optimizer.set_writer(writer)
 
         # Reload previous state

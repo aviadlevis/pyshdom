@@ -407,6 +407,21 @@ class DynamicScatterer(object):
     def __getitem__(self, val):
         return self._temporary_scatterer_list[val]
 
+    def pop_temporary_scatterer(self, index):
+        """
+        Pop a Medium from the Dynamic Medium.
+
+        Parameters
+        ----------
+        index: int
+
+        """
+        assert isinstance(index,int) and index >=0 and index < self.num_scatterers
+        self._num_scatterers -= 1
+        temporary_scatterer = self.temporary_scatterer_list[index]
+        del self._temporary_scatterer_list[index]
+        return temporary_scatterer
+
     @property
     def type(self):
         return self._type
@@ -488,6 +503,23 @@ class DynamicMedium(object):
                 self.wavelength, medium.wavelength)
         self._num_mediums += 1
         self._medium_list.append(medium)
+
+    def pop_medium(self, index):
+        """
+        Pop a Medium from the Dynamic Medium.
+
+        Parameters
+        ----------
+        index: int
+
+        """
+        assert isinstance(index,int) and index >=0 and index < self.num_mediums
+        self._num_mediums -= 1
+        medium = DynamicMedium()
+        medium.add_medium(self._medium_list[index])
+        del self._medium_list[index]
+
+        return medium
 
     def __getitem__(self, val):
         return self._medium_list[val]
@@ -584,7 +616,6 @@ class DynamicRteSolver(object):
             solver_array = shdom.RteSolverArray(medium_solver_list)
             solver_array.set_medium(medium)
             self._solver_array_list.append(solver_array)
-
 
     def replace_dynamic_medium(self, dynamic_medium):
         assert isinstance(dynamic_medium, DynamicMedium) or isinstance(dynamic_medium, DynamicMediumEstimator), ' dynamic_medium type is wrong'
@@ -694,6 +725,21 @@ class DynamicRteSolver(object):
 
         self._maxiters = max([solver_array.num_iterations for solver_array in self.solver_array_list])
 
+
+    def pop_solver(self, index):
+        """
+        Pop a RTE solver from the Dynamic Rte Solver.
+
+        Parameters
+        ----------
+        index: int
+
+        """
+        assert isinstance(index,int) and index >=0 and index < self.num_solver_arrays
+        dynamic_medium = self.dynamic_medium.pop_medium(index)
+        rte_solver = DynamicRteSolver(self._scene_params, self._numerical_params)
+        rte_solver.set_dynamic_medium(dynamic_medium)
+        return rte_solver
     @property
     def dynamic_medium(self):
         return self._dynamic_medium
@@ -914,11 +960,6 @@ class DynamicMeasurements(shdom.Measurements):
         """
         Split the measurements and projection.
 
-        Parameters
-        ----------
-        n_parts: int
-            The number of parts to split the measurements to
-
         Returns
         -------
         measurements: list
@@ -931,7 +972,6 @@ class DynamicMeasurements(shdom.Measurements):
         assert self._num_viewed_mediums > 0
         pixels = np.array_split(self.pixels, self.num_viewed_mediums)
         projections = self.camera.dynamic_projection.multiview_projection_list
-        # images = np.array_split(self.images, n_parts)
         measurements = [shdom.Measurements(
             camera=shdom.Camera(self.camera.sensor, projection),wavelength=self.wavelength,
             pixels=pixel) for projection, pixel in zip(projections, pixels)
@@ -960,6 +1000,23 @@ class DynamicMeasurements(shdom.Measurements):
             out.append(shdom.MultiViewProjection(projection_list[int(last):int(last + avg)]))
             last += avg
         return out
+
+    def get_cross_validation_measurements(self, cv_index):
+        num_projections = len(self.camera.dynamic_projection.multiview_projection_list)
+        assert isinstance(cv_index,int) and cv_index >= 0 and cv_index < num_projections
+        projections_list = self.camera.dynamic_projection.multiview_projection_list
+        projections = [x for i, x in enumerate(projections_list) if i != cv_index]
+        camera = DynamicCamera(self.camera.sensor, DynamicProjection(projections))
+        images = [x for i, x in enumerate(self.images) if i != cv_index] 
+        time_list = [x for i, x in enumerate(self.time_list) if i != cv_index]
+        measurements = DynamicMeasurements(camera=camera, images=images, wavelength=self.wavelength,
+                                           time_list=time_list)
+        camera = DynamicCamera(self.camera.sensor, DynamicProjection([projections_list[cv_index]]))
+        image = [self.images[cv_index]]
+        time = [self.time_list[cv_index]]
+        cv_measurement = DynamicMeasurements(camera=camera, images=image, wavelength=self.wavelength,
+                                           time_list=time)
+        return cv_measurement, measurements
 
     @property
     def time_list(self):
@@ -1539,19 +1596,10 @@ class Static(shdom.CloudGenerator):
 
 
 class DynamicGridDataEstimator(object):
-    # def __init__(self, grid_data_list,init_val,min_bound=None, max_bound=None, precondition_scale_factor=1.0):
-    #     self._dynamic_grid_data = []
-    #     for grid_data in grid_data_list:
-    #         # init_vals = np.random.normal(loc=0.01, scale=0.001,size=grid_data.data.shape)
-    #         init_vals = np.ones_like(grid_data.data)*init_val
-    #         init_grid_data = shdom.GridData(grid_data.grid,init_vals)
-    #         self._dynamic_grid_data.append(shdom.GridDataEstimator(init_grid_data,min_bound, max_bound,precondition_scale_factor))
 
     def __init__(self, dynamic_data, min_bound=None, max_bound=None, precondition_scale_factor=1.0):
         self._dynamic_data = []
         for data in dynamic_data:
-            # init_vals = np.random.normal(loc=0.01, scale=0.001,size=grid_data.data.shape)
-            # init_vals = np.ones_like(grid_data.data) * init_val
             init_data = shdom.GridData(data.grid, data.data)
             self._dynamic_data.append(shdom.GridDataEstimator(init_data,min_bound, max_bound,precondition_scale_factor))
 
@@ -1685,6 +1733,7 @@ class DynamicMediumEstimator(object):
         self._dynamic_medium = []
         self._time_list = []
         self._medium_list = []
+        self._images_mask = None
         self._dynamic_scatterer_estimator = dynamic_scatterer_estimator
         self._scatterer_velocity = scatterer_velocity
         if dynamic_scatterer_estimator is not None and air is not None:
@@ -1721,9 +1770,8 @@ class DynamicMediumEstimator(object):
         loss =[]
 
         resolutions = measurements.camera.dynamic_projection.resolution
-
+        avg_npix = np.mean(resolutions)
         # split_indices = np.cumsum(measurements.camera.projection.npix[:-1])
-        n_parts = len(self.medium_list)
         measurements = measurements.split()
         # if len(self.wavelength)>2:
         wavelength = self.wavelength
@@ -1732,11 +1780,11 @@ class DynamicMediumEstimator(object):
         num_channels = len(wavelength)
         multichannel = num_channels > 1
 
-        for medium_estimator, rte_solver, measurement, resolution in zip(self.medium_list, dynamic_solver.solver_array_list, measurements, resolutions):
+        for medium_estimator, rte_solver, measurement in zip(self.medium_list, dynamic_solver.solver_array_list, measurements):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray(rte_solver),measurement,n_jobs)
             # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            data_gradient.extend(grad_output[0]/ len(measurements))
+            data_gradient.extend(grad_output[0])
             data_loss += (grad_output[1])
             image = grad_output[2]
             # resolution = measurement.images.shape
@@ -1745,11 +1793,11 @@ class DynamicMediumEstimator(object):
             #     new_shape.append(num_channels)
             # images.append(image.reshape(resolution, order='F'))
             images += image
-        loss.append(data_loss / len(measurements))#unit less loss
-        # loss.append(data_loss)
+        # loss.append(data_loss / len(measurements))
+        loss.append(data_loss)#unit less loss
 
         if regularization_const != 0 and len(self._medium_list) > 1:
-            regularization_loss, regularization_grad = self.compute_gradient_regularization(regularization_const)
+            regularization_loss, regularization_grad = self.compute_gradient_regularization(regularization_const, avg_npix)
             loss.append(regularization_loss)
             state_gradient = np.asarray(data_gradient) + regularization_grad
         else:
@@ -1758,14 +1806,14 @@ class DynamicMediumEstimator(object):
 
         return state_gradient, loss, images
 
-    def compute_gradient_regularization(self,regularization_const, regularization_type='l2'):
+    def compute_gradient_regularization(self,regularization_const, avg_npix, regularization_type='l2'):
         loss = 0
         for param_name, param in self.dynamic_scatterer_estimator.temporary_scatterer_estimator_list[0].scatterer.estimators.items():
-            typical_avg = {
-                'extinction': 1,
-                'lwc': 0.01,
-                'reff': 10,
-                'veff': 0.01
+            typical_grad = {
+                'extinction': 1/100,
+                'lwc': 0.01/100,
+                'reff': 10/100,
+                'veff': 0.01/100
             }
             # typical_avg = {
             #     'extinction': 1,
@@ -1773,12 +1821,12 @@ class DynamicMediumEstimator(object):
             #     'reff': 1,
             #     'veff': 1
             # }
-            param_typical_avg = typical_avg[param_name]
-            param_typical_avg = param.precondition_scale_factor ** 0.5
+            param_typical_avg = typical_grad[param_name]
+            # param_typical_avg = param.precondition_scale_factor ** 0.5
 
             estimated_parameter_stack = []
             # grid_size = param.grid.nx * param.grid.ny * param.grid.nz
-            grid_size = 1
+            # grid_size = 1
 
             for scatterer_estimator in self._medium_list:
                 estimated_parameter_stack.append(scatterer_estimator.get_state())
@@ -1788,13 +1836,17 @@ class DynamicMediumEstimator(object):
 
             dynamic_estimated_parameter = np.stack(estimated_parameter_stack, axis=1)
             curr_grad = np.zeros_like(dynamic_estimated_parameter)
+            num_voxels = dynamic_estimated_parameter.shape[0]
+            M = dynamic_estimated_parameter.shape[1]
+            I_typical = 0.1
+
             time = np.array(self.time_list)
             if regularization_type == 'l2':
                 assert curr_grad.shape[1]>1,'cant calculate gradient for 1 image'
                 curr_grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:]) / (time[:-1] - time[1:])
                 curr_grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1]) / (time[1:] - time[:-1])
 
-                norm_const = 1 / grid_size / (dynamic_estimated_parameter.shape[1]-1) / param_typical_avg**2
+                norm_const = (M / (M-1)) * (I_typical/param_typical_avg)**2 * (avg_npix/num_voxels)
 
                 curr_grad = np.reshape(curr_grad,(-1,), order='F') * norm_const
                 grad = np.concatenate((grad,curr_grad))
@@ -1891,6 +1943,9 @@ class DynamicLocalOptimizer(object):
         self._init_solution = init_solution
         self._num_parameters = []
         self._regularization_const = regularization_const
+        self._cv_rte_solver = None
+        self._cv_measurement = None
+        self._cv_loss = None
         if method not in ['L-BFGS-B', 'TNC']:
             raise NotImplementedError('Optimization method [{}] not implemented'.format(method))
         self._method = method
@@ -1972,7 +2027,6 @@ class DynamicLocalOptimizer(object):
         )
         self._loss = loss
         self._images = images
-        # estimated_velocity = self._medium.scatterer_velocity_estimate()
         return sum(loss), gradient
 
     def callback(self, state):
@@ -2109,6 +2163,44 @@ class DynamicLocalOptimizer(object):
         state = pickle.loads(data)
         self.medium.set_state(state)
 
+    def set_cross_validation_param(self, cv_rte_solver, cv_measurement, cv_index):
+        self._cv_rte_solver = cv_rte_solver
+        self._cv_measurement = cv_measurement
+        self._cv_time = cv_measurement.time_list
+        assert np.any(np.diff(np.array(self.measurements.time_list)))>=0,'Time list should be sorted'
+        self._cv_index = cv_index
+        # times = np.array(self.measurements.time_list+[cv_time])
+        # self._cv_indices = np.argsort(times)
+
+    def get_cross_validation_medium(self, scatterer_name):
+        index = self._cv_index
+        if index == 0:
+            medium = self._medium.medium_list[0]
+        elif index == len(self._measurements.time_list):
+            medium = self._medium.medium_list[-1]
+        else:
+            previous_medium = self._medium.medium_list[index - 1]
+            forward_medium = self._medium.medium_list[index]
+            previous_time = np.array(self.measurements.time_list[index - 1])
+            forward_time = np.array(self.measurements.time_list[index])
+            weighted_average_extinction = previous_medium.get_scatterer(scatterer_name).extinction.data + \
+                                (np.array(self._cv_time) - previous_time) * (forward_medium.get_scatterer(scatterer_name).extinction.data
+                                - previous_medium.get_scatterer(scatterer_name).extinction.data) / (forward_time - previous_time)
+            medium = previous_medium
+            medium.get_scatterer(scatterer_name).extinction._data = weighted_average_extinction
+        dynamic_medium = DynamicMedium()
+        dynamic_medium.add_medium(medium)
+        return dynamic_medium
+
+    def get_cross_validation_images(self):
+        # index = np.argwhere(self._cv_indices == len(self._cv_indices)-1)[0]
+        dynamic_medium = self.get_cross_validation_medium('cloud')
+        self._cv_rte_solver.set_dynamic_medium(dynamic_medium)
+        self._cv_rte_solver.solve(maxiter=100)
+        cv_image = self._cv_measurement.camera.render(self._cv_rte_solver, n_jobs=self.n_jobs)
+        self._cv_loss = np.sum((np.array(cv_image) - np.array(self._cv_measurement.images)).ravel() ** 2)
+        return cv_image
+
 
     @property
     def regularization_const(self):
@@ -2158,6 +2250,9 @@ class DynamicLocalOptimizer(object):
     def images(self):
         return self._images
 
+    @property
+    def cv_loss(self):
+        return self._cv_loss
 
 class DynamicSummaryWriter(object):
     """
@@ -2538,7 +2633,6 @@ class DynamicSummaryWriter(object):
                     self.tf_writer.add_scalar(kwargs['title'][1].format(dynamic_scatterer_name, parameter_name, gt_temporary_scatterer.time), epsilon,
                                               self.optimizer.iteration)
 
-
     def domain_mean_cbfn(self, kwargs):
         """
         Callback function for monitoring domain averages of parameters.
@@ -2672,6 +2766,7 @@ class DynamicSummaryWriter(object):
                         global_step=self.optimizer.iteration
                     )
 
+
     def write_image_list(self, global_step, images, titles, vmax=None):
         """
         Write an image list to tensorboardX.
@@ -2722,6 +2817,191 @@ class DynamicSummaryWriter(object):
                     dataformats='HW',
                     global_step=global_step
                 )
+
+
+    def monitor_cross_validation(self, cv_measurement, ckpt_period=-1):
+        """
+        Monitor the Cross Validation process
+
+        Parameters
+        ----------
+        cv_measurement: shdom.DynamicMeasurements
+            The acquired images will be logged once onto tensorboard for comparison with the current state.
+        ckpt_period: float
+           time [seconds] between updates. setting ckpt_period=-1 will log at every iteration.
+        """
+        acquired_images = cv_measurement.images
+        sensor_type = cv_measurement.camera.sensor.type
+        num_images = len(acquired_images)
+
+        if sensor_type == 'RadianceSensor':
+            vmax = [image.max() * 1.25 for image in acquired_images]
+        elif sensor_type == 'StokesSensor':
+            vmax = [image.reshape(image.shape[0], -1).max(axis=-1) * 1.25 for image in acquired_images]
+
+        kwargs = {
+            'ckpt_period': ckpt_period,
+            'ckpt_time': time.time(),
+            'title': ['Cross Validation Retrieval/view{}'.format(view) for view in range(num_images)],
+            'vmax': vmax
+        }
+        self.add_callback_fn(self.estimated_cross_validation_images_cbfn, kwargs)
+        acq_titles = ['Cross Validation Acquired/view{}'.format(view) for view in range(num_images)]
+        self.write_image_list(0, acquired_images, acq_titles, vmax=kwargs['vmax'])
+
+        kwargs = {
+            'ckpt_period': ckpt_period,
+            'ckpt_time': time.time(),
+            'title': 'Cross Validation/loss',
+        }
+        self.add_callback_fn(self.cv_loss_cbfn, kwargs)
+
+    def cv_loss_cbfn(self, kwargs):
+        """
+        Callback function that is called (every optimizer iteration) for loss monitoring.
+
+        Parameters
+        ----------
+        kwargs: dict,
+            keyword arguments
+        """
+        self.tf_writer.add_scalar(kwargs['title'], self.optimizer.cv_loss, self.optimizer.iteration)
+
+    def estimated_cross_validation_images_cbfn(self, kwargs):
+        """
+        Callback function the is called every optimizer iteration image monitoring is set.
+
+        Parameters
+        ----------
+        kwargs: dict,
+            keyword arguments
+        """
+        self.write_image_list(self.optimizer.iteration, self.optimizer.get_cross_validation_images(), kwargs['title'], kwargs['vmax'])
+
+    def monitor_cross_validation_scatterer_error(self, estimator_name, cv_ground_truth, ckpt_period=-1):
+        """
+        Monitor relative and overall mass error (epsilon, delta) as defined at:
+          Amit Aides et al, "Multi sky-view 3D aerosol distribution recovery".
+
+        Parameters
+        ----------
+        estimator_name: str
+            The name of the scatterer to monitor
+        ground_truth: shdom.Scatterer
+            The ground truth medium.
+        ckpt_period: float
+           time [seconds] between updates. setting ckpt_period=-1 will log at every iteration.
+        """
+        kwargs = {
+            'ckpt_period': ckpt_period,
+            'ckpt_time': time.time(),
+            'title': ['Cross Validation/delta {} at time {}', 'Cross Validation/epsilon {} at time {}']
+        }
+        self.add_callback_fn(self.cross_validation_scatterer_error_cbfn, kwargs)
+        if hasattr(self, '_cv_ground_truth'):
+            self._cv_ground_truth[estimator_name] = cv_ground_truth
+        else:
+            self._cv_ground_truth = OrderedDict({estimator_name: cv_ground_truth})
+
+    def cross_validation_scatterer_error_cbfn(self, kwargs):
+        """
+        Callback function for monitoring parameter error measures.
+
+        Parameters
+        ----------
+        kwargs: dict,
+            keyword arguments
+        """
+        for dynamic_scatterer_name, gt_temporary_scatterer in self._cv_ground_truth.items():
+            est_scatterer = self.optimizer.get_cross_validation_medium(dynamic_scatterer_name).medium_list[0].estimators[dynamic_scatterer_name]
+            for parameter_name, parameter in est_scatterer.estimators.items():
+                gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
+                est_param = parameter.resample(gt_param.grid).data.flatten()
+            # gt_param = gt_temporary_scatterer.scatterer.extinction
+            # est_param = estimator_temporary_scatterer.scatterer.extinction.resample(gt_param.grid).data.flatten()
+                gt_param = gt_param.data.flatten()
+
+                delta = (np.linalg.norm(est_param, 1) - np.linalg.norm(gt_param, 1)) / np.linalg.norm(gt_param, 1)
+                epsilon = np.linalg.norm((est_param - gt_param), 1) / np.linalg.norm(gt_param, 1)
+                self.tf_writer.add_scalar(kwargs['title'][0].format(parameter_name, gt_temporary_scatterer.time), delta,
+                                          self.optimizer.iteration)
+                self.tf_writer.add_scalar(kwargs['title'][1].format(parameter_name, gt_temporary_scatterer.time), epsilon,
+                                          self.optimizer.iteration)
+
+
+    def monitor_cross_validation_scatter_plot(self, estimator_name, cv_ground_truth, dilute_percent=0.4, ckpt_period=-1, parameters='all'):
+        """
+        Monitor scatter plot of the parameters
+
+        Parameters
+        ----------
+        estimator_name: str
+            The name of the scatterer to monitor
+        ground_truth: shdom.Scatterer
+            The ground truth medium.
+        dilute_precent: float [0,1]
+            Precentage of (random) points that will be shown on the scatter plot.
+        ckpt_period: float
+           time [seconds] between updates. setting ckpt_period=-1 will log at every iteration.
+        parameters: str,
+           The parameters for which to monitor scatter plots. 'all' monitors all estimated parameters.
+        """
+        kwargs = {
+            'ckpt_period': ckpt_period,
+            'ckpt_time': time.time(),
+            'title': 'Cross Validation {}/scatter_plot/{}{}',
+            'percent': dilute_percent,
+            'parameters': parameters
+        }
+        self.add_callback_fn(self.cross_validation_scatter_plot_cbfn, kwargs)
+        if hasattr(self, '_ground_truth'):
+            self._cv_ground_truth[estimator_name] = cv_ground_truth
+        else:
+            self._cv_ground_truth = OrderedDict({estimator_name: cv_ground_truth})
+
+
+    def cross_validation_scatter_plot_cbfn(self, kwargs):
+        """
+        Callback function for monitoring scatter plot of parameters.
+
+        Parameters
+        ----------
+        kwargs: dict,
+            keyword arguments
+        """
+        for dynamic_scatterer_name, gt_temporary_scatterer in self._cv_ground_truth.items():
+            est_scatterer = self.optimizer.get_cross_validation_medium(dynamic_scatterer_name).medium_list[0].estimators[dynamic_scatterer_name]
+            for parameter_name, parameter in est_scatterer.estimators.items():
+
+                    gt_param = getattr(gt_temporary_scatterer.scatterer, parameter_name)
+                    est_param = parameter.resample(gt_param.grid)
+                    est_param_data = copy.copy(est_param.data)
+                    est_param_data = est_param_data[
+                        (est_param.mask.resample(gt_param.grid).data == True)].ravel()
+
+                    gt_param_data = copy.copy(gt_param.data)
+                    gt_param_data = gt_param_data[
+                        (est_param.mask.resample(gt_param.grid).data == True)].ravel()
+
+                    rho = np.corrcoef(est_param_data, gt_param_data)[1, 0]
+                    num_params = gt_param_data.size
+                    rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
+                    max_val = max(gt_param_data.max(), est_param_data.max())
+                    fig, ax = plt.subplots()
+                    ax.set_title(r'{} {}{}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(dynamic_scatterer_name, parameter_name, 0, 100 * kwargs['percent'], rho),
+                                 fontsize=16)
+                    ax.scatter(gt_param_data[rand_ind], est_param_data[rand_ind], facecolors='none', edgecolors='b')
+                    ax.set_xlim([0, 1.1*max_val])
+                    ax.set_ylim([0, 1.1*max_val])
+                    ax.plot(ax.get_xlim(), ax.get_ylim(), c='r', ls='--')
+                    ax.set_ylabel('Estimated', fontsize=14)
+                    ax.set_xlabel('True', fontsize=14)
+
+                    self.tf_writer.add_figure(
+                        tag=kwargs['title'].format(dynamic_scatterer_name, parameter_name, 0),
+                        figure=fig,
+                        global_step=self.optimizer.iteration
+                    )
 
     @property
     def callback_fns(self):

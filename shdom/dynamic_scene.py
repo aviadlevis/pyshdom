@@ -217,52 +217,59 @@ class DynamicScatterer(object):
         self._type = None
 
         for scatterer_shift, time in zip(scatterer_shifts, time_list):
-            if isinstance(scatterer,shdom.MicrophysicalScatterer):
-                shifted_scatterer = shdom.MicrophysicalScatterer()
-                assert scatterer.grid.type == '3D', 'Scatterer grid type has to be 3D'
-                grid_lwc = shdom.Grid(x=scatterer.grid.x+scatterer_shift[0], y=scatterer.grid.y+scatterer_shift[1],
-                                      z=scatterer.grid.z+scatterer_shift[2])
-                if scatterer.reff.type == '3D':
-                    grid_reff = grid_lwc
-                else:
-                    grid_reff = scatterer.reff.grid
-                if scatterer.veff.type == '3D':
-                    grid_veff = grid_lwc
-                else:
-                    grid_veff = scatterer.veff.grid
-                shifted_scatterer.set_microphysics(
-                    lwc=shdom.GridData(grid_lwc, scatterer.lwc.data).squeeze_dims(),
-                    reff=shdom.GridData(grid_reff, scatterer.reff.data).squeeze_dims(),
-                    veff=shdom.GridData(grid_veff, scatterer.veff.data).squeeze_dims()
-                )
-                if scatterer.num_wavelengths >1:
-                    shifted_scatterer.add_mie(scatterer.mie)
-                else:
-                    shifted_scatterer.add_mie(scatterer.mie[scatterer.wavelength])
-                self._type = 'MicrophysicalScatterer'
-            elif isinstance(scatterer,shdom.OpticalScatterer()):
-                grid_extinction = shdom.Grid(x=scatterer.grid.x + scatterer_shift[0], y=scatterer.grid.y +
-                                                    scatterer_shift[1], z=scatterer.grid.z + scatterer_shift[2])
-                if scatterer.albedo.type == '3D':
-                    grid_albedo= grid_extinction
-                else:
-                    grid_albedo = scatterer.albedo.grid
-                if scatterer.phase.type == '3D':
-                    grid_phase = grid_extinction
-                else:
-                    grid_phase = scatterer.phase.grid
-                shifted_scatterer = shdom.OpticalScatterer(wavelength=scatterer.wavelength,
-                                    extinction=shdom.GridData(grid_extinction, scatterer.extinction.data).squeeze_dims(),
-                                    albedo=shdom.GridData(grid_albedo, scatterer.albedo.data).squeeze_dims(),
-                                    phase=shdom.GridPhase(scatterer.phase.legendre_table,grid_phase)
-                                   )
-            else:
-                assert 'Scatterer type is not supported'
+            shifted_scatterer = self.shift_scatterer(scatterer, scatterer_shift)
             temporary_scatterer = TemporaryScatterer(shifted_scatterer, time)
 
             self._temporary_scatterer_list.append(temporary_scatterer)
             self._num_scatterers += 1
             self._time_list.append(float(time))
+
+    def shift_scatterer(self, scatterer, scatterer_shift):
+        if isinstance(scatterer, shdom.MicrophysicalScatterer):
+            shifted_scatterer = shdom.MicrophysicalScatterer()
+            assert scatterer.grid.type == '3D', 'Scatterer grid type has to be 3D'
+            grid_lwc = shdom.Grid(x=scatterer.grid.x + scatterer_shift[0], y=scatterer.grid.y + scatterer_shift[1],
+                                  z=scatterer.grid.z + scatterer_shift[2])
+            if scatterer.reff.type == '3D':
+                grid_reff = grid_lwc
+            else:
+                grid_reff = scatterer.reff.grid
+            if scatterer.veff.type == '3D':
+                grid_veff = grid_lwc
+            else:
+                grid_veff = scatterer.veff.grid
+            shifted_scatterer.set_microphysics(
+                lwc=shdom.GridData(grid_lwc, scatterer.lwc.data).squeeze_dims(),
+                reff=shdom.GridData(grid_reff, scatterer.reff.data).squeeze_dims(),
+                veff=shdom.GridData(grid_veff, scatterer.veff.data).squeeze_dims()
+            )
+            if scatterer.num_wavelengths > 1:
+                shifted_scatterer.add_mie(scatterer.mie)
+            else:
+                shifted_scatterer.add_mie(scatterer.mie[scatterer.wavelength])
+            self._type = 'MicrophysicalScatterer'
+        elif isinstance(scatterer, shdom.OpticalScatterer):
+            grid_extinction = shdom.Grid(x=scatterer.grid.x + scatterer_shift[0], y=scatterer.grid.y +
+                                                                                    scatterer_shift[1],
+                                         z=scatterer.grid.z + scatterer_shift[2])
+            if scatterer.albedo.type == '3D':
+                grid_albedo = grid_extinction
+            else:
+                grid_albedo = scatterer.albedo.grid
+            if scatterer.phase.type == '3D':
+                grid_phase = grid_extinction
+            else:
+                grid_phase = scatterer.phase.grid
+            shifted_scatterer = shdom.OpticalScatterer(wavelength=scatterer.wavelength,
+                                                       extinction=shdom.GridData(grid_extinction,
+                                                                                 scatterer.extinction.data).squeeze_dims(),
+                                                       albedo=shdom.GridData(grid_albedo,
+                                                                             scatterer.albedo.data).squeeze_dims(),
+                                                       phase=shdom.GridPhase(scatterer.phase.legendre_table, grid_phase)
+                                                       )
+        else:
+            assert 'Scatterer type is not supported'
+        return shifted_scatterer
 
     def get_mask(self, threshold):
         """
@@ -1784,7 +1791,7 @@ class DynamicMediumEstimator(object):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray(rte_solver),measurement,n_jobs)
             # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            data_gradient.extend(grad_output[0])
+            data_gradient.extend(grad_output[0]/ len(measurements))
             data_loss += (grad_output[1])
             image = grad_output[2]
             # resolution = measurement.images.shape
@@ -1793,8 +1800,8 @@ class DynamicMediumEstimator(object):
             #     new_shape.append(num_channels)
             # images.append(image.reshape(resolution, order='F'))
             images += image
-        # loss.append(data_loss / len(measurements))
-        loss.append(data_loss)#unit less loss
+        loss.append(data_loss / len(measurements))#unit less loss
+        # loss.append(data_loss)
 
         if regularization_const != 0 and len(self._medium_list) > 1:
             regularization_loss, regularization_grad = self.compute_gradient_regularization(regularization_const, avg_npix)
@@ -1846,7 +1853,7 @@ class DynamicMediumEstimator(object):
                 curr_grad[:,:-1] += 2*(dynamic_estimated_parameter[:,:-1] - dynamic_estimated_parameter[:,1:]) / (time[:-1] - time[1:])
                 curr_grad[:, 1:] += 2*(dynamic_estimated_parameter[:,1:] - dynamic_estimated_parameter[:,:-1]) / (time[1:] - time[:-1])
 
-                norm_const = (M / (M-1)) * (I_typical/param_typical_avg)**2 * (avg_npix/num_voxels)
+                norm_const = (1 / (M-1)) * (I_typical/param_typical_avg)**2 * (avg_npix/num_voxels)
 
                 curr_grad = np.reshape(curr_grad,(-1,), order='F') * norm_const
                 grad = np.concatenate((grad,curr_grad))

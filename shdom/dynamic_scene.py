@@ -1782,7 +1782,7 @@ class DynamicMediumEstimator(object):
         loss =[]
 
         resolutions = measurements.camera.dynamic_projection.resolution
-        avg_npix = np.mean(resolutions)
+        avg_npix = np.mean(resolutions)**2
         split_indices = np.cumsum(measurements.camera.dynamic_projection.npix[:-1])
         measurements = measurements.split(split_indices)
         # if len(self.wavelength)>2:
@@ -2195,11 +2195,15 @@ class DynamicLocalOptimizer(object):
             forward_medium = self._medium.medium_list[index]
             previous_time = np.array(self.measurements.time_list[index - 1])
             forward_time = np.array(self.measurements.time_list[index])
-            weighted_average_extinction = previous_medium.get_scatterer(scatterer_name).extinction.data + \
+            weighted_average_extinction_data = previous_medium.get_scatterer(scatterer_name).extinction.data + \
                                 (np.array(self._cv_time) - previous_time) * (forward_medium.get_scatterer(scatterer_name).extinction.data
                                 - previous_medium.get_scatterer(scatterer_name).extinction.data) / (forward_time - previous_time)
-            medium = previous_medium
-            medium.get_scatterer(scatterer_name).extinction._data = weighted_average_extinction
+            medium = shdom.Medium(previous_medium.grid + forward_medium.grid)
+            scatterer = previous_medium.get_scatterer(scatterer_name)
+            weighted_average_extinction = shdom.GridData(scatterer.extinction.grid, weighted_average_extinction_data)
+            cloud = shdom.OpticalScatterer(scatterer.wavelength,weighted_average_extinction,scatterer.albedo, scatterer.phase)
+            medium.add_scatterer(cloud, name=scatterer_name)
+            medium.add_scatterer(previous_medium.get_scatterer('air'), name='air')
         dynamic_medium = DynamicMedium()
         dynamic_medium.add_medium(medium)
         return dynamic_medium

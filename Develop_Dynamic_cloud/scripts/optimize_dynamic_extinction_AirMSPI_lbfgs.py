@@ -101,6 +101,11 @@ class OptimizationScript(object):
                             default=False,
                             action='store_true',
                             help='Use the ground truth cloud velocity.')
+        parser.add_argument('--use_cross_validation',
+                            default=-1,
+                            type=int,
+                            help='Reconstruct on base of all the view-points except mentioned,'
+                                 ' if negative run without cross validation')
         return parser
 
     def medium_args(self, parser):
@@ -124,7 +129,7 @@ class OptimizationScript(object):
                             action='store_true',
                             help='Use the ground-truth phase reconstruction.')
         parser.add_argument('--radiance_threshold',
-                            default=[0.01],
+                            default=[0.005],
                             nargs='+',
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
@@ -188,6 +193,7 @@ class OptimizationScript(object):
         """
         """
         wavelength = measurements.wavelength
+        time_list = measurements.time_list
         if not isinstance(wavelength,list):
             wavelength = [wavelength]
         # Define the grid for reconstruction
@@ -216,11 +222,19 @@ class OptimizationScript(object):
         albedo = self.cloud_generator.get_albedo(wavelength[0], [albedo_grid] * len(dynamic_grid))
         phase = self.cloud_generator.get_phase(wavelength[0], [phase_grid] * len(dynamic_grid))
 
+        cv_index = self.args.use_cross_validation
+        if cv_index >= 0:
+            del dynamic_grid[cv_index]
+            del mask_list[cv_index]
+            del albedo[cv_index]
+            del phase[cv_index]
+            time_list = np.delete(measurements.time_list, cv_index)
+
         extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(measurements.wavelength, dynamic_grid),
                                                     min_bound=1e-5,
                                                     max_bound=2e2)
         kw_optical_scatterer = {"extinction": extinction, "albedo": albedo, "phase": phase}
-        cloud_estimator = shdom.DynamicScattererEstimator(wavelength=wavelength, time_list=measurements.time_list, **kw_optical_scatterer)
+        cloud_estimator = shdom.DynamicScattererEstimator(wavelength=wavelength, time_list=time_list, **kw_optical_scatterer)
         cloud_estimator.set_mask(mask_list)
 
         # Create a medium estimator object (optional Rayleigh scattering)
@@ -284,9 +298,16 @@ class OptimizationScript(object):
         # Initialize a RTESolver
         dynamic_solver = self.get_rte_solver(measurements, medium_estimator)
 
+        cv_index = self.args.use_cross_validation
+        if cv_index >= 0:
+            cv_rte_solver = shdom.DynamicRteSolver(scene_params=dynamic_solver._scene_params,
+                                                   numerical_params=dynamic_solver._numerical_params)
+            cv_measurement, measurements = measurements.get_cross_validation_measurements(cv_index)
+
         # Initialize TensorboardX logger
         writer = self.get_summary_writer(measurements)
-        regularization_const = self.args.reg_const
+        if cv_index >= 0:
+            writer.monitor_cross_validation(cv_measurement=cv_measurement, ckpt_period=-1)
 
         # Initialize a LocalOptimizer
         options = {
@@ -297,12 +318,13 @@ class OptimizationScript(object):
             'ftol': self.args.ftol,
         }
         optimizer = shdom.DynamicLocalOptimizer('L-BFGS-B', options=options, n_jobs=self.args.n_jobs,
-                                                regularization_const=regularization_const)
+                                                regularization_const=self.args.reg_const)
         optimizer.set_measurements(measurements)
         optimizer.set_dynamic_solver(dynamic_solver)
         optimizer.set_medium_estimator(medium_estimator)
         optimizer.set_writer(writer)
-
+        if cv_index >= 0:
+            optimizer.set_cross_validation_param(cv_rte_solver, cv_measurement, cv_index)
         # Reload previous state
         if self.args.reload_path is not None:
             optimizer.load_state(self.args.reload_path)
@@ -318,7 +340,7 @@ class OptimizationScript(object):
                                                        measurements.sun_zenith_list):
             scene_params = shdom.SceneParameters(
                 wavelength=wavelength,
-                surface=shdom.LambertianSurface(albedo=0.02),
+                surface=shdom.LambertianSurface(albedo=0.005),
                 source=shdom.SolarSource(azimuth=sun_azimuth, zenith=sun_zenith)
             )
             scene_params_list.append(scene_params)

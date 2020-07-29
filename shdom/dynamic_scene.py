@@ -968,7 +968,7 @@ class DynamicMeasurements(shdom.Measurements):
         else:
             self._num_viewed_mediums = 0
 
-    def split(self):
+    def split(self, split_indices):
         """
         Split the measurements and projection.
 
@@ -981,8 +981,8 @@ class DynamicMeasurements(shdom.Measurements):
         -----
         An even split doesnt always exist, in which case some parts will have slightly more pixels.
         """
-        assert self._num_viewed_mediums > 0
-        pixels = np.array_split(self.pixels, self.num_viewed_mediums)
+        # assert self._num_viewed_mediums > 0
+        pixels = np.array_split(self.pixels, split_indices)
         projections = self.camera.dynamic_projection.multiview_projection_list
         measurements = [shdom.Measurements(
             camera=shdom.Camera(self.camera.sensor, projection),wavelength=self.wavelength,
@@ -1783,8 +1783,8 @@ class DynamicMediumEstimator(object):
 
         resolutions = measurements.camera.dynamic_projection.resolution
         avg_npix = np.mean(resolutions)
-        # split_indices = np.cumsum(measurements.camera.projection.npix[:-1])
-        measurements = measurements.split()
+        split_indices = np.cumsum(measurements.camera.dynamic_projection.npix[:-1])
+        measurements = measurements.split(split_indices)
         # if len(self.wavelength)>2:
         wavelength = self.wavelength
         if not isinstance(self.wavelength,list):

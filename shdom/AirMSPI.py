@@ -569,7 +569,7 @@ class AirMSPIMeasurements(shdom.Measurements):
         return self._bb
 
 
-class AirMSPIDynamicMeasurements(AirMSPIMeasurements):
+class AirMSPIDynamicMeasurements(AirMSPIMeasurements, shdom.DynamicMeasurements):
     """
       A AirMSPI Dynamic Measurements object bundles together the imaging geometry and sensor measurements for later optimization.
       It can be initialized with a Camera and images or pixels.

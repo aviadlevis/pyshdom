@@ -202,7 +202,7 @@ class OptimizationScript(object):
 
         # Find a cloud mask for non-cloudy grid points
         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.75,
+        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.70,
                             time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
                             vx_max = 10, vy_max=10, gt_velocity = cloud_velocity)
         show_mask=1

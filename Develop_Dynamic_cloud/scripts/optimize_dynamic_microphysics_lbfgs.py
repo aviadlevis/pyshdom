@@ -161,8 +161,8 @@ class OptimizationScript(ExtinctionOptimizationScript):
             reff = self.cloud_generator.get_reff(reff_grid)
         else:
             reff = shdom.DynamicGridDataEstimator(self.cloud_generator.get_reff(reff_grid),
-                                           min_bound=0,
-                                           max_bound=80,
+                                           min_bound=0.01,
+                                           max_bound=35,
                                            precondition_scale_factor=self.args.reff_scaling)
             reff = reff.dynamic_data
 
@@ -174,7 +174,7 @@ class OptimizationScript(ExtinctionOptimizationScript):
         else:
             veff = shdom.DynamicGridDataEstimator(self.cloud_generator.get_veff(veff_grid),
                                            min_bound=0.01,
-                                           max_bound=0.8,
+                                           max_bound=0.3,
                                            precondition_scale_factor=self.args.veff_scaling)
             veff = veff.dynamic_data
 

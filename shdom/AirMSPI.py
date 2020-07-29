@@ -78,7 +78,7 @@ class AirMSPIMeasurements(shdom.Measurements):
         return roi
 
     @classmethod
-    def imshow(cls, directory):
+    def imshow(cls, directory, index=-1):
         """
             Show the AirMSPI images in the directory directory.
 
@@ -95,6 +95,8 @@ class AirMSPIMeasurements(shdom.Measurements):
         format_ = '*.hdf'
         paths = sorted(glob.glob(directory + '/' + format_))
         images = []
+        if index > 0 and index < len(paths):
+            paths=[paths[index]]
         for path in paths:
             f = h5py.File(path, 'r')
             channels_data = f['HDFEOS']['GRIDS']
@@ -668,14 +670,13 @@ class AirMSPIDynamicMeasurements(AirMSPIMeasurements):
         """
             Set the AirMSPI's Dynamic camera.
         """
-
         projections = self.get_projections_from_data()
         self._projections = projections
         if self._sensor_type == 'Radiance':
             sensor = shdom.RadianceSensor()
         else:
             NotImplemented()
-        self._camera = shdom.DynamicCamera(sensor, projections)
+        self._camera = shdom.DynamicCamera(sensor, shdom.DynamicProjection(projections.projection_list))
 
         def images_to_pixels(self, images):
             """

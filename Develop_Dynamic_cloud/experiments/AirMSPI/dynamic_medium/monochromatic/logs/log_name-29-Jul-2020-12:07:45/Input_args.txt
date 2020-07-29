@@ -1,0 +1,33 @@
+input_dir : Develop_Dynamic_cloud/experiments/AirMSPI/dynamic_medium/monochromatic
+reload_path : None
+log : log_name
+reg_const : 1e-06
+n_jobs : 40
+globalopt : False
+maxiter : 1000
+maxls : 30
+disp : True
+gtol : 1e-16
+ftol : 1e-16
+stokes_weights : [1.0, 0.0, 0.0, 0.0]
+loss_type : l2
+assume_moving_cloud : False
+use_forward_albedo : False
+use_forward_phase : False
+radiance_threshold : [0.01]
+mie_base_path : mie_tables/polydisperse/Water_<wavelength>nm.scat
+init : Homogeneous
+add_rayleigh : True
+nx : 10
+ny : 10
+nz : 10
+domain_size : 2.0
+extinction : 1.0
+lwc : None
+reff : 10.0
+veff : 0.01
+time_list : [0, 0, 0, 0, 0, 0, 0, 0, 0]
+cloud_velocity : [0, 0, 0]
+air_path : ancillary_data/AFGL_summer_mid_lat.txt
+air_max_alt : 20.0
+air_num_points : 20

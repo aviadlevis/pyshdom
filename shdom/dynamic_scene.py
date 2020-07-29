@@ -849,9 +849,15 @@ class DynamicProjection(shdom.Projection):
             self._names.append(name)
             self._resolution.append(projection.resolution)
         if not isinstance(projection,shdom.MultiViewProjection):
-            projection = shdom.MultiViewProjection(projection)
+            projection = shdom.MultiViewProjection([projection])
         self._multiview_projection_list.append(projection)
         self._num_viewed_medium += 1
+
+    def get_flatten_projections(self):
+        projection_list = []
+        for multiview_projection in self.multiview_projection_list:
+            projection_list += multiview_projection.projection_list
+        return projection_list
 
     @property
     def multiview_projection_list(self):
@@ -863,18 +869,17 @@ class DynamicProjection(shdom.Projection):
 
 
 class DynamicCamera(object):
-    """
-    An DynamicCamera object ecapsulates both sensor and projection for Dynamic camera.
-
-    Parameters
-    ----------
-    sensor: shdom.Sensor
-        A sensor object
-    projection: shdom.Projection
-        A projection geometry list
-    """
-
     def __init__(self, sensor=shdom.Sensor(), dynamic_projection=DynamicProjection()):
+        """
+        An DynamicCamera object ecapsulates both sensor and projection for Dynamic camera.
+
+        Parameters
+        ----------
+        sensor: shdom.Sensor
+            A sensor object
+        projection: shdom.DynamicProjection
+            A Dynamic Projection object
+        """
         self.set_sensor(sensor)
         self.set_dynamic_projection(dynamic_projection)
 
@@ -3047,12 +3052,13 @@ class DynamicSpaceCarver(object):
 
         self._measurements = measurements
 
-        if isinstance(measurements.camera.projection, shdom.MultiViewProjection):
-            self._projections = measurements.camera.projection.projection_list
-        elif isinstance(measurements.camera.projection, list):
-            self._projections = measurements.camera.projection
-        else:
-            self._projections = [measurements.camera.projection]
+        # if isinstance(measurements.camera.projection, shdom.MultiViewProjection):
+        #     self._projections = measurements.camera.dynamic_projection.multiview_projection_list
+        # elif isinstance(measurements.camera.projection, list):
+        #     self._projections = measurements.camera.projection
+        # else:
+        #     self._projections = [measurements.camera.projection]
+        self._projections = measurements.camera.dynamic_projection.multiview_projection_list
         self._images = measurements.images
 
     def carve(self, grid, thresholds, time_list, agreement=0.75, vx_max=5, vy_max=5, gt_velocity = None):

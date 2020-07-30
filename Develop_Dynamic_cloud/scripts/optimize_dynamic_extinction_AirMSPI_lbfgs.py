@@ -106,6 +106,12 @@ class OptimizationScript(object):
                             type=int,
                             help='Reconstruct on base of all the view-points except mentioned,'
                                  ' if negative run without cross validation')
+        parser.add_argument('--num_mediums',
+                            default=-1,
+                            type=int,
+                            help='Number of different mediums to be reconstructed,'
+                                 ' if negative run without cross validation')
+
         return parser
 
     def medium_args(self, parser):
@@ -192,13 +198,21 @@ class OptimizationScript(object):
     def get_medium_estimator(self, measurements):
         """
         """
-        wavelength = measurements.wavelength
+
+        num_of_mediums = self.args.num_mediums
+        cv_index = self.args.use_cross_validation
         time_list = measurements.time_list
+        if cv_index >= 0:
+            time_list = np.delete(time_list, cv_index)
+
+        assert isinstance(num_of_mediums, int) and num_of_mediums <= len(time_list)
+
+        wavelength = measurements.wavelength
         if not isinstance(wavelength,list):
             wavelength = [wavelength]
+
         # Define the grid for reconstruction
-        extinction_grid = albedo_grid = phase_grid = shdom.Grid(bounding_box=measurements.bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
-        grid = extinction_grid
+        grid = albedo_grid = phase_grid = shdom.Grid(bounding_box=measurements.bb,nx=self.args.nx,ny=self.args.ny,nz=self.args.nz)
 
         if self.args.assume_moving_cloud:
             cloud_velocity = None
@@ -211,35 +225,38 @@ class OptimizationScript(object):
         mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.70,
                             time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
                             vx_max = 10, vy_max=10, gt_velocity = cloud_velocity)
+        mask = mask_list[0]
         show_mask=1
         if show_mask:
-            a = (mask_list[0].data).astype(int)
+            a = mask.data.astype(int)
             shdom.cloud_plot(a)
             print(cloud_velocity)
             print(sum(sum(sum(a))))
         table_path = self.args.mie_base_path.replace('<wavelength>', '{}'.format(shdom.int_round(wavelength[0])))
         self.cloud_generator.add_mie(table_path)
-        albedo = self.cloud_generator.get_albedo(wavelength[0], [albedo_grid] * len(dynamic_grid))
-        phase = self.cloud_generator.get_phase(wavelength[0], [phase_grid] * len(dynamic_grid))
+        albedo = self.cloud_generator.get_albedo(wavelength[0], [albedo_grid] * num_of_mediums)
+        phase = self.cloud_generator.get_phase(wavelength[0], [phase_grid] * num_of_mediums)
 
-        cv_index = self.args.use_cross_validation
-        if cv_index >= 0:
-            del dynamic_grid[cv_index]
-            del mask_list[cv_index]
-            del albedo[cv_index]
-            del phase[cv_index]
-            time_list = np.delete(measurements.time_list, cv_index)
+        # cv_index = self.args.use_cross_validation
+        # if cv_index >= 0:
+        #     # del dynamic_grid[cv_index]
+        #     # del mask_list[cv_index]
+        #     # del albedo[cv_index]
+        #     # del phase[cv_index]
+        #     time_list = np.delete(measurements.time_list, cv_index)
+        time_list = np.mean(np.split(time_list, num_of_mediums), 1)
 
-        extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(measurements.wavelength, dynamic_grid),
+
+        extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(wavelength, [grid] * num_of_mediums),
                                                     min_bound=1e-5,
                                                     max_bound=2e2)
         kw_optical_scatterer = {"extinction": extinction, "albedo": albedo, "phase": phase}
         cloud_estimator = shdom.DynamicScattererEstimator(wavelength=wavelength, time_list=time_list, **kw_optical_scatterer)
-        cloud_estimator.set_mask(mask_list)
+        cloud_estimator.set_mask([mask] * num_of_mediums)
 
         # Create a medium estimator object (optional Rayleigh scattering)
         air = self.air_generator.get_scatterer(wavelength)
-        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air,cloud_velocity)
+        medium_estimator = shdom.DynamicMediumEstimator(cloud_estimator, air, cloud_velocity)
 
         return medium_estimator
 
@@ -291,6 +308,13 @@ class OptimizationScript(object):
 
         measurements = shdom.AirMSPIDynamicMeasurements()
         measurements.load_airmspi_measurements(self.args.input_dir)
+        cv_index = self.args.use_cross_validation
+        if self.args.num_mediums < 0:
+            self.args.num_mediums = len(measurements.time_list)
+            if cv_index >= 0:
+                self.args.num_mediums -= 1
+
+
 
         # Initialize a Medium Estimator
         medium_estimator = self.get_medium_estimator(measurements)
@@ -298,11 +322,11 @@ class OptimizationScript(object):
         # Initialize a RTESolver
         dynamic_solver = self.get_rte_solver(measurements, medium_estimator)
 
-        cv_index = self.args.use_cross_validation
         if cv_index >= 0:
             cv_rte_solver = shdom.DynamicRteSolver(scene_params=dynamic_solver._scene_params,
                                                    numerical_params=dynamic_solver._numerical_params)
             cv_measurement, measurements = measurements.get_cross_validation_measurements(cv_index)
+        measurements = measurements.downsample_viewed_mediums(self.args.num_mediums)
 
         # Initialize TensorboardX logger
         writer = self.get_summary_writer(measurements)

@@ -997,7 +997,7 @@ class DynamicMeasurements(shdom.Measurements):
 
         dynamic_projection = shdom.DynamicProjection(self.projection_split(new_num_viewed_mediums))
         dynamic_camera = shdom.DynamicCamera(self.camera.sensor, dynamic_projection)
-        time_list = np.mean(np.split(self.time_list, new_num_viewed_mediums), 1)
+        time_list = np.mean(np.split(np.array(self.time_list), new_num_viewed_mediums), 1)
         return DynamicMeasurements(dynamic_camera, images=self.images, wavelength=self.wavelength,time_list=time_list)
 
     def projection_split(self, n_parts):
@@ -1781,6 +1781,7 @@ class DynamicMediumEstimator(object):
         images = []
         loss =[]
 
+
         resolutions = measurements.camera.dynamic_projection.resolution
         avg_npix = np.mean(resolutions)**2
         split_indices = np.cumsum(measurements.camera.dynamic_projection.npix[:-1])
@@ -1796,7 +1797,7 @@ class DynamicMediumEstimator(object):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray(rte_solver),measurement,n_jobs)
             # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            data_gradient.extend(grad_output[0]/ len(measurements))
+            data_gradient.extend(grad_output[0] / self.num_mediums)
             data_loss += (grad_output[1])
             image = grad_output[2]
             # resolution = measurement.images.shape
@@ -1805,7 +1806,7 @@ class DynamicMediumEstimator(object):
             #     new_shape.append(num_channels)
             # images.append(image.reshape(resolution, order='F'))
             images += image
-        loss.append(data_loss / len(measurements))#unit less loss
+        loss.append(data_loss / self.num_mediums)#unit less loss
         # loss.append(data_loss)
 
         if regularization_const != 0 and len(self._medium_list) > 1:
@@ -2178,23 +2179,30 @@ class DynamicLocalOptimizer(object):
     def set_cross_validation_param(self, cv_rte_solver, cv_measurement, cv_index):
         self._cv_rte_solver = cv_rte_solver
         self._cv_measurement = cv_measurement
-        self._cv_time = cv_measurement.time_list
         assert np.any(np.diff(np.array(self.measurements.time_list)))>=0,'Time list should be sorted'
         self._cv_index = cv_index
-        # times = np.array(self.measurements.time_list+[cv_time])
-        # self._cv_indices = np.argsort(times)
+        if not isinstance(cv_measurement.time_list, list):
+            self._cv_time = [cv_measurement.time_list]
+        else:
+            self._cv_time = cv_measurement.time_list
+        if not isinstance(self.measurements.time_list, list):
+            time_list = self.measurements.time_list.tolist()
+        else:
+            time_list = self.measurements.time_list
+        times = np.array(time_list+self._cv_time)
+        self._cv_indices = np.argsort(times)
 
     def get_cross_validation_medium(self, scatterer_name):
-        index = self._cv_index
+        index = self._cv_indices[-1]
         if index == 0:
-            medium = self._medium.medium_list[0]
-        elif index == len(self._measurements.time_list):
-            medium = self._medium.medium_list[-1]
+            medium = self._medium.medium_list[np.where(1 == self._cv_indices)[0].item()]
+        elif index == len(self._cv_indices - 1):
+            medium = self._medium.medium_list[np.where((index - 1) == self._cv_indices)[0].item()]
         else:
-            previous_medium = self._medium.medium_list[index - 1]
-            forward_medium = self._medium.medium_list[index]
-            previous_time = np.array(self.measurements.time_list[index - 1])
-            forward_time = np.array(self.measurements.time_list[index])
+            previous_medium = self._medium.medium_list[np.where((index - 1) == self._cv_indices)[0].item()]
+            forward_medium = self._medium.medium_list[np.where((index + 1) == self._cv_indices)[0].item()]
+            previous_time = np.array(self.measurements.time_list[np.where((index - 1) == self._cv_indices)[0].item()])
+            forward_time = np.array(self.measurements.time_list[np.where((index + 1) == self._cv_indices)[0].item()])
             weighted_average_extinction_data = previous_medium.get_scatterer(scatterer_name).extinction.data + \
                                 (np.array(self._cv_time) - previous_time) * (forward_medium.get_scatterer(scatterer_name).extinction.data
                                 - previous_medium.get_scatterer(scatterer_name).extinction.data) / (forward_time - previous_time)

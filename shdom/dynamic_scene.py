@@ -1087,7 +1087,7 @@ class Homogeneous(shdom.CloudGenerator):
                             type=np.float32,
                             help='(default value: %(default)s) Extinction [km^-1]')
         parser.add_argument('--lwc',
-                            default=None,
+                            default=1,
                             type=np.float32,
                             help='(default value: %(default)s) Liquid water content of the center voxel [g/m^3]. If specified, extinction argument is ignored.')
         parser.add_argument('--reff',
@@ -1806,7 +1806,7 @@ class DynamicMediumEstimator(object):
             #     new_shape.append(num_channels)
             # images.append(image.reshape(resolution, order='F'))
             images += image
-        loss.append(data_loss / self.num_mediums)#unit less loss
+        loss.append(data_loss / self.num_mediums) #unit less loss
         # loss.append(data_loss)
 
         if regularization_const != 0 and len(self._medium_list) > 1:
@@ -3073,7 +3073,7 @@ class DynamicSpaceCarver(object):
         self._projections = measurements.camera.dynamic_projection.multiview_projection_list
         self._images = measurements.images
 
-    def carve(self, grid, thresholds, time_list, agreement=0.75, vx_max=5, vy_max=5, gt_velocity = None):
+    def carve(self, grid, thresholds, time_list, agreement=0.75, vx_max=5, vy_max=5, gt_velocity = None, verbose=False):
         """
         Carves out the cloud geometry on the grid.
         A threshold on radiances is used to produce a pixel mask and preform space carving.
@@ -3130,7 +3130,7 @@ class DynamicSpaceCarver(object):
                         image = image[0]
 
                     image_mask = image > threshold
-                    if 1 and first:
+                    if verbose and first:
                         plt.imshow(image_mask)
                         plt.show()
                     projection = projection[image_mask.ravel(order='F') == 1]

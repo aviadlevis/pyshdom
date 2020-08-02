@@ -247,7 +247,7 @@ class OptimizationScript(object):
         time_list = np.mean(np.split(time_list, num_of_mediums), 1)
 
 
-        extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(wavelength, [grid] * num_of_mediums),
+        extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(wavelength[0], [grid] * num_of_mediums),
                                                     min_bound=1e-5,
                                                     max_bound=2e2)
         kw_optical_scatterer = {"extinction": extinction, "albedo": albedo, "phase": phase}

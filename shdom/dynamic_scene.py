@@ -1087,7 +1087,7 @@ class Homogeneous(shdom.CloudGenerator):
                             type=np.float32,
                             help='(default value: %(default)s) Extinction [km^-1]')
         parser.add_argument('--lwc',
-                            default=1,
+                            default=None,
                             type=np.float32,
                             help='(default value: %(default)s) Liquid water content of the center voxel [g/m^3]. If specified, extinction argument is ignored.')
         parser.add_argument('--reff',
@@ -2193,7 +2193,7 @@ class DynamicLocalOptimizer(object):
         self._cv_indices = np.argsort(times)
 
     def get_cross_validation_medium(self, scatterer_name):
-        index = self._cv_indices[-1]
+        index = np.where(self._cv_indices == self._cv_indices.max())[0]
         if index == 0:
             medium = self._medium.medium_list[np.where(1 == self._cv_indices)[0].item()]
         elif index == len(self._cv_indices - 1):
@@ -2277,6 +2277,7 @@ class DynamicLocalOptimizer(object):
     @property
     def cv_loss(self):
         return self._cv_loss
+
 
 class DynamicSummaryWriter(object):
     """
@@ -2843,7 +2844,7 @@ class DynamicSummaryWriter(object):
                 )
 
 
-    def monitor_cross_validation(self, cv_measurement, ckpt_period=-1):
+    def monitor_cross_validation(self, cv_measurement, dilute_percent=0.4, ckpt_period=-1):
         """
         Monitor the Cross Validation process
 
@@ -2880,6 +2881,16 @@ class DynamicSummaryWriter(object):
         }
         self.add_callback_fn(self.cv_loss_cbfn, kwargs)
 
+        kwargs = {
+            'ckpt_period': ckpt_period,
+            'ckpt_time': time.time(),
+            'title': 'Cross Validation/image scatter plot',
+            'percent': dilute_percent,
+        }
+        self.add_callback_fn(self.cv_image_scatter_plot_cbfn, kwargs)
+
+
+
     def cv_loss_cbfn(self, kwargs):
         """
         Callback function that is called (every optimizer iteration) for loss monitoring.
@@ -2901,6 +2912,30 @@ class DynamicSummaryWriter(object):
             keyword arguments
         """
         self.write_image_list(self.optimizer.iteration, self.optimizer.get_cross_validation_images(), kwargs['title'], kwargs['vmax'])
+
+    def cv_image_scatter_plot_cbfn(self, kwargs):
+        cv_image_estimated = np.array(self.optimizer.get_cross_validation_images()).ravel()
+        cv_image = np.array(self.optimizer._cv_measurement.images).ravel()
+        rho = np.corrcoef(cv_image_estimated, cv_image)[1, 0]
+        num_params = cv_image.size
+        rand_ind = np.unique(np.random.randint(0, num_params, int(kwargs['percent'] * num_params)))
+        max_val = max(cv_image.max(), cv_image_estimated.max())
+        fig, ax = plt.subplots()
+        ax.set_title(
+            r'{}: ${:1.0f}\%$ randomly sampled; $\rho={:1.2f}$'.format(0, 100 * kwargs['percent'], rho),
+            fontsize=16)
+        ax.scatter(cv_image[rand_ind], cv_image_estimated[rand_ind], facecolors='none', edgecolors='b')
+        ax.set_xlim([0, 1.1 * max_val])
+        ax.set_ylim([0, 1.1 * max_val])
+        ax.plot(ax.get_xlim(), ax.get_ylim(), c='r', ls='--')
+        ax.set_ylabel('Estimated', fontsize=14)
+        ax.set_xlabel('True', fontsize=14)
+
+        self.tf_writer.add_figure(
+            tag=kwargs['title'],
+            figure=fig,
+            global_step=self.optimizer.iteration
+        )
 
     def monitor_cross_validation_scatterer_error(self, estimator_name, cv_ground_truth, ckpt_period=-1):
         """
@@ -2952,7 +2987,6 @@ class DynamicSummaryWriter(object):
                 self.tf_writer.add_scalar(kwargs['title'][1].format(parameter_name, gt_temporary_scatterer.time), epsilon,
                                           self.optimizer.iteration)
 
-
     def monitor_cross_validation_scatter_plot(self, estimator_name, cv_ground_truth, dilute_percent=0.4, ckpt_period=-1, parameters='all'):
         """
         Monitor scatter plot of the parameters
@@ -2982,7 +3016,6 @@ class DynamicSummaryWriter(object):
             self._cv_ground_truth[estimator_name] = cv_ground_truth
         else:
             self._cv_ground_truth = OrderedDict({estimator_name: cv_ground_truth})
-
 
     def cross_validation_scatter_plot_cbfn(self, kwargs):
         """
@@ -3026,6 +3059,8 @@ class DynamicSummaryWriter(object):
                         figure=fig,
                         global_step=self.optimizer.iteration
                     )
+
+
 
     @property
     def callback_fns(self):

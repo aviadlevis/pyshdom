@@ -28,8 +28,8 @@ class AirMSPIMeasurements(shdom.Measurements):
         self._region_of_interest = None
         self._paths = None
         self._set_valid_wavelength_range = None
-        self.cloud_base = 0
-        self.cloud_top = 1
+        self.cloud_base = 0.5
+        self.cloud_top = 1.5
         self._bb = None
         self._relative_coordinates = None
         if images is not None:
@@ -287,8 +287,8 @@ class AirMSPIMeasurements(shdom.Measurements):
         bb_y = flat_earth_pos[1] + self.cloud_base * np.tan(theta) * np.cos(phi) - cloud_com_y
         self.set_cloud_bounding_box(bb_x, bb_y)
 
-        xTranslation = airmspi_flight_altitude * np.tan(theta) * np.cos(phi) - cloud_com_x # X - North
-        yTranslation = airmspi_flight_altitude * np.tan(theta) * np.sin(phi) - cloud_com_y # Y - East
+        xTranslation = (airmspi_flight_altitude - self.cloud_base) * np.tan(theta) * np.cos(phi) - cloud_com_x # X - North
+        yTranslation = (airmspi_flight_altitude - self.cloud_base) * np.tan(theta) * np.sin(phi) - cloud_com_y # Y - East
 
         x = flat_earth_pos[0] + xTranslation
         y = flat_earth_pos[1] + yTranslation

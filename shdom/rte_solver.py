@@ -130,7 +130,7 @@ class OceanSurface(Surface):
         self.wind_azimuth = wind_azimuth
         self.salinity = salinity
         self.chlorophyll_concentration = chlorophyll_concentration
-        self.ocean_temperature = 298.15
+        self.ground_temperature = 298.15
 
 
     @property
@@ -460,16 +460,17 @@ class RteSolver(object):
             self._sfcparms = []
             self._sfcgridparms = []
         elif scene_params.surface.type == 'Ocean':
-            self._sfctype = 'FO'  # Fixed Ocean
+            self._sfctype = 'VO'
+            self._gndalbedo = 0.05
             self._ocnwindspeed = scene_params.surface.wind_speed
             self._ocnwpigment= scene_params.surface.chlorophyll_concentration
-            self._ocntemp = scene_params.surface.ground_temperature
-            self._nxsfc = 0
-            self._nysfc = 0
+            self._gndtemp = scene_params.surface.ground_temperature
+            self._nxsfc = 1 # Fixed Ocean, does not support nxsfc>1
+            self._nysfc = 1 # Fixed Ocean, does not support nysfc>1
             self._delxsfc = 0
             self._delysfc = 0
-            self._nsfcpar = 1
-            self._sfcparms = []
+            self._nsfcpar = 3
+            self._sfcparms = [self._gndtemp, self._ocnwindspeed, self._ocnwpigment]
             self._sfcgridparms = []
         else:
             raise NotImplementedError('Only Lambertian surface is currently supported')

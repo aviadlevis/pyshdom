@@ -1,9 +1,12 @@
 README.md
 setup.py
+shdom/AirMSPI.py
 shdom/__init__.py
+shdom/dynamic_scene.py
 shdom/generate.py
 shdom/medium.py
 shdom/optimize.py
+shdom/optimize_old.py
 shdom/phase.py
 shdom/rte_solver.py
 shdom/sensor.py

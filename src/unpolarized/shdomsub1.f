@@ -294,19 +294,20 @@ C            bottom grid points.
      .                            SRCTYPE, WAVENO, WAVELEN, UNITS,
      .                            NXSFC, NYSFC, DELXSFC, DELYSFC, 
      .                            NSFCPAR, SFCPARMS, SFCGRIDPARMS)
-        IF (SFCTYPE(2:2) .EQ. 'O') THEN
-          CALL CHECK_OCEAN_BRDF_INTEG (NXSFC, NYSFC, NSFCPAR, 
-     .                                 SFCPARMS,WAVELEN, SOLARMU, 
-     .                                 SOLARAZ, NMU, NPHI0, 
-     .                                 NPHI0MAX, MU, PHI, WTDO)
-        ENDIF
       ENDIF
+      IF (SFCTYPE(2:2) .EQ. 'O') THEN
+         CALL CHECK_OCEAN_BRDF_INTEG (NXSFC, NYSFC, NSFCPAR,
+     .                                SFCPARMS,WAVELEN, SOLARMU,
+     .                                SOLARAZ, NMU, NPHI0,
+     .                                NPHI0MAX, MU, PHI, WTDO)
+      ENDIF
+
       
       RETURN 
       END
       
       
-      SUBROUTINE SOLUTION_ITERATIONS(NSTOKES, NX, NY, NZ, NX1, NY1, 
+      SUBROUTINE SOLUTION_ITERATIONS(NSTOKES, NX, NY, NZ, NX1, NY1,
      .               NANG, ML, MM, NCS, NLM, NMU, NPHI, NLEG,
      .               NSTLEG, NUMPHASE, NPHI0, MU, PHI, WTDO,
      .               MAXIV, MAXIC, MAXIG, MAXIDO, BCFLAG, IPFLAG,
@@ -1209,7 +1210,6 @@ Cf2py intent(in) :: OLDNPTS
       INTEGER IX, IY, IZ, SIX, SIY, SIZ, EIX, EIY, EIZ, DIX, DIY, DIZ
      
 C         Set the minimum transmission for the cell tracing (1 for single cell)
-      
       TRANSMIN = 1.00
 
 C         Make the new grid cell/point sweeping order if need to
@@ -1228,14 +1228,14 @@ C         Make the new grid cell/point sweeping order if need to
       LAMBERTIAN = SFCTYPE(2:2) .EQ. 'L'
       IF (NPTS .NE. OLDNPTS) THEN
 C         Make the pointers to the grid points on the top and bottom boundaries
-        CALL BOUNDARY_PNTS (NPTS, NANG, LAMBERTIAN, MAXNBC, MAXBCRAD, 
-     .                      ZGRID(1), ZGRID(NZ), GRIDPOS,
-     .                      NTOPPTS, NBOTPTS, BCPTR)
-        IF (SFCTYPE(1:1) .EQ. 'V') THEN
-C             If this is a variable surface then bilinearly interpolate 
+      CALL BOUNDARY_PNTS (NPTS, NANG, LAMBERTIAN, MAXNBC, MAXBCRAD,
+     .                    ZGRID(1), ZGRID(NZ), GRIDPOS,
+     .                    NTOPPTS, NBOTPTS, BCPTR)
+      IF (SFCTYPE(1:1) .EQ. 'V') THEN
+C             If this is a variable surface then bilinearly interpolate
 C               the surface temperature and reflection parameters to the
-C               bottom grid points. 
-          CALL SURFACE_PARM_INTERP (NBOTPTS, BCPTR(1,2), GRIDPOS,
+C               bottom grid points.
+        CALL SURFACE_PARM_INTERP (NBOTPTS, BCPTR(1,2), GRIDPOS,
      .             SRCTYPE, WAVENO, WAVELEN, UNITS,
      .             NXSFC, NYSFC, DELXSFC, DELYSFC, NSFCPAR, SFCPARMS,
      .             SFCGRIDPARMS)
@@ -1308,10 +1308,11 @@ C               Initialize the bottom boundary radiances
 C                 If a Lambertian surface, use the radiances computed above,
 C                   otherwise, compute the radiance for this angle
 C                   by integrating over the stored downwelling radiances.
+
               CALL VARIABLE_BRDF_SURFACE (NBOTPTS,1,NBOTPTS,BCPTR(1,2),
-     .               NMU, NPHI0MAX, NPHI0, MU, PHI, WTDO, 
-     .               MU(IMU), PHI(IMU,IPHI), 
-     .               SRCTYPE, WAVELEN, SOLARMU, SOLARAZ, DIRFLUX, 
+     .               NMU, NPHI0MAX, NPHI0, MU, PHI, WTDO,
+     .               MU(IMU), PHI(IMU,IPHI),
+     .               SRCTYPE, WAVELEN, SOLARMU, SOLARAZ, DIRFLUX,
      .               SFCTYPE, NSFCPAR, SFCGRIDPARMS, BCRAD(1+NTOPPTS))
             ENDIF
             DO IBC = 1, NBOTPTS
@@ -1470,10 +1471,14 @@ C         Loop over all bottom points
         IY = MAX(1,MIN(NYSFC,INT(RY)+1))
         U = MAX(0.0,MIN(1.0,RX-(IX-1)))
         V = MAX(0.0,MIN(1.0,RY-(IY-1)))
+
         DO J = 1, NSFCPAR
-          SFCGRIDPARMS(J,IBC) = (1-U)*(1-V)*SFCPARMS(J,IX,IY)
-     .        + (1-U)*V*SFCPARMS(J,IX,IY+1)
-     .        + U*(1-V)*SFCPARMS(J,IX+1,IY) + U*V*SFCPARMS(J,IX+1,IY+1)
+!         SFCGRIDPARMS(J,IBC) = (1-U)*(1-V)*SFCPARMS(J,IX,IY)
+!    .        + (1-U)*V*SFCPARMS(J,IX,IY+1)
+!    .        + U*(1-V)*SFCPARMS(J,IX+1,IY) + U*V*SFCPARMS(J,IX+1,IY+1)
+C     Pyshdom 'FO' surface SFCPARMS read
+          SFCGRIDPARMS(J,IBC) = SFCPARMS(J,1,1)
+
         ENDDO
         IF (SRCTYPE .EQ. 'S') THEN
           PLANCK = 0.0
@@ -1652,14 +1657,13 @@ C     the delta function in the BRDF.
       OPI = 1.0/ACOS(-1.0)
 
       DO IBC = IBEG, IEND
-
 C         Initialize the upwelling boundary radiances to zero or to 
 C           the reflected direct solar flux.
         IF (SRCTYPE .EQ. 'T') THEN
           BCRAD(IBC,1) = 0.0
         ELSE
           I = BCPTR(IBC)
-          CALL SURFACE_BRDF (SFCTYPE(2:2), SFCGRIDPARMS(2,IBC),WAVELEN,
+          CALL SURFACE_BRDF (SFCTYPE(2:2), SFCGRIDPARMS(2:NSFCPAR,IBC),WAVELEN,
      .                       MU2, PHI2, SOLARMU,SOLARAZ,  REFLECT)
           BCRAD(IBC,1) = OPI*REFLECT*DIRFLUX(I)
         ENDIF
@@ -1667,7 +1671,9 @@ C           the reflected direct solar flux.
 C         A specularly reflecting surface is a special case: instead
 C           of the integral over incident radiances, the radiance from
 C           the incident specular direction is interpolated.
+
         IF (SPECULAR_SURFACE(SFCTYPE(2:2))) THEN
+
 C             Get the reflection coefficient for this outgoing direction
           CALL SURFACE_BRDF (SFCTYPE(2:2), SFCGRIDPARMS(2,IBC),WAVELEN,
      .                       MU2, PHI2, -MU2, PHI2, REFLECT)
@@ -1696,7 +1702,7 @@ C             ordinate directions (JMU,JPHI)
           JANG = 1
           DO JMU = 1, NMU/2
             DO JPHI = 1, NPHI0(JMU)
-              CALL SURFACE_BRDF (SFCTYPE(2:2), SFCGRIDPARMS(2,IBC),
+              CALL SURFACE_BRDF (SFCTYPE(2:2), SFCGRIDPARMS(2:NSFCPAR,IBC),
      .               WAVELEN, MU2,PHI2, MU(JMU),PHI(JMU,JPHI), REFLECT)
               W = OPI*ABS(MU(JMU))*WTDO(JMU,JPHI)
               BCRAD(IBC,1) = BCRAD(IBC,1) + W*REFLECT*BCRAD(IBC,JANG+1) 

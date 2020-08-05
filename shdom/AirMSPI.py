@@ -5,7 +5,8 @@ import shdom
 from datetime import datetime
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize_scalar
-
+from skimage import filters
+from skimage.measure import regionprops
 
 class AirMSPIMeasurements(shdom.Measurements):
     """
@@ -30,8 +31,8 @@ class AirMSPIMeasurements(shdom.Measurements):
         self._region_of_interest = None
         self._paths = None
         self._set_valid_wavelength_range = None
-        self.cloud_base = 0.5
-        self.cloud_top = 1.5
+        self.cloud_min_h = 0.0
+        self.cloud_max_h = 1.5
         self._bb = None
         self._relative_coordinates = None
         if images is not None:
@@ -196,6 +197,8 @@ class AirMSPIMeasurements(shdom.Measurements):
         self.set_images()
         self._pixels = self.images_to_pixels(self.images)
         self.set_sun_params()
+        self.calc_albedo()
+        self.check_glint_angle()
 
     def set_region_of_interest(self, region_of_interest):
         """
@@ -254,9 +257,10 @@ class AirMSPIMeasurements(shdom.Measurements):
         if len(f) == 2:
             elevation = np.full(longitude.shape, 0)
         elif len(f) == 3:
-            elevation = np.array(channels_data_ancillary['Elevation']) / 1000  # [Km]
-            elevation = elevation[region_of_interest[0]:region_of_interest[1],
-                        region_of_interest[2]:region_of_interest[3]]
+            # elevation = np.array(channels_data_ancillary['Elevation']) # [m]
+            # elevation = elevation[region_of_interest[0]:region_of_interest[1],
+            #             region_of_interest[2]:region_of_interest[3]]
+            elevation = np.full(longitude.shape, 0)
         else:
             assert 'Unsupported AirMSPI data version'
 
@@ -274,23 +278,24 @@ class AirMSPIMeasurements(shdom.Measurements):
         psio = 0  # Angle between X axis and North
         href = 0  # Reference height
         flat_earth_pos = (np.array(self.lla2flat(lla, llo, psio, href)) / 1000)  # [Km] N-E coordinates
-
-        channels_data = f['HDFEOS']['GRIDS']['355nm_band']['Data Fields']
+        # image reg with minimal ocean effect in this wl, View_zenith/azimuth equal for all wl
+        channels_data = f['HDFEOS']['GRIDS']['355nm_band']['Data Fields'] # 355 was before
         theta = np.deg2rad(channels_data['View_zenith']
                            [region_of_interest[0]:region_of_interest[1], region_of_interest[2]:region_of_interest[3]])
         mu = np.cos(theta)
         phi = np.deg2rad(np.array(channels_data['View_azimuth'])
                          [region_of_interest[0]:region_of_interest[1], region_of_interest[2]:region_of_interest[3]])
+        channels_data = f['HDFEOS']['GRIDS']['865nm_band']['Data Fields'] # 355 was before
         I = np.array(channels_data['I'][region_of_interest[0]:region_of_interest[1],
                      region_of_interest[2]:region_of_interest[3]])
         cloud_com_x, cloud_com_y = self.center_of_mass(I,flat_earth_pos[0],flat_earth_pos[1])
 
-        bb_x = flat_earth_pos[0] + self.cloud_base * np.tan(theta) * np.cos(phi) - cloud_com_x
-        bb_y = flat_earth_pos[1] + self.cloud_base * np.tan(theta) * np.cos(phi) - cloud_com_y
+        bb_x = flat_earth_pos[0] + self.cloud_min_h * np.tan(theta) * np.cos(phi) - cloud_com_x
+        bb_y = flat_earth_pos[1] + self.cloud_min_h * np.tan(theta) * np.cos(phi) - cloud_com_y
         self.set_cloud_bounding_box(bb_x, bb_y)
 
-        xTranslation = (airmspi_flight_altitude - self.cloud_base) * np.tan(theta) * np.cos(phi) - cloud_com_x # X - North
-        yTranslation = (airmspi_flight_altitude - self.cloud_base) * np.tan(theta) * np.sin(phi) - cloud_com_y # Y - East
+        xTranslation = (airmspi_flight_altitude) * np.tan(theta) * np.cos(phi) - cloud_com_x # X - North
+        yTranslation = (airmspi_flight_altitude) * np.tan(theta) * np.sin(phi) - cloud_com_y # Y - East
 
         x = flat_earth_pos[0] + xTranslation
         y = flat_earth_pos[1] + yTranslation
@@ -311,9 +316,9 @@ class AirMSPIMeasurements(shdom.Measurements):
                 of cloud's base location in Km.
         """
         if self._bb is None:
-            self._bb = shdom.BoundingBox(x.min(), y.min(), self.cloud_base, x.max(), y.max(), self.cloud_top)
+            self._bb = shdom.BoundingBox(x.min(), y.min(), self.cloud_min_h, x.max(), y.max(), self.cloud_max_h)
         else:
-            bb = shdom.BoundingBox(x.min(), y.min(), self.cloud_base, x.max(), y.max(), self.cloud_top)
+            bb = shdom.BoundingBox(x.min(), y.min(), self.cloud_min_h, x.max(), y.max(), self.cloud_max_h)
             self._bb = self._bb + bb
 
     def center_of_mass(self, I, x, y):
@@ -327,8 +332,10 @@ class AirMSPIMeasurements(shdom.Measurements):
             com_y: scalar
                 of center of mass at y axis
         """
-        com_x = np.sum(I * x) / np.sum(I)
-        com_y = np.sum(I * y) / np.sum(I)
+        threshold_value = filters.threshold_otsu(I)
+        I[I < threshold_value] = 0
+        com_y = np.sum(I * x) / np.sum(I)
+        com_x = np.sum(I * y) / np.sum(I)
         return com_x, com_y
 
     def get_projections_from_data(self):
@@ -453,7 +460,21 @@ class AirMSPIMeasurements(shdom.Measurements):
                 images.append(np.array(image))
         self._images = images
 
-    def calc_albedo(self, thresholds=0.005):
+    def check_glint_angle(self):
+        glint_angles = []
+        for path, roi in zip(self._paths,self._region_of_interest):
+            f = h5py.File(path, 'r')
+            channels_data = f['HDFEOS']['GRIDS']
+            for param_name, param in channels_data.items():
+                if "band" in param_name:
+                    if int(param_name[0:3]) in self._valid_wavelength:
+                        glint_angle = param['Data Fields']['Glint_angle'][roi[0]:roi[1], roi[2]:roi[3]]
+                        glint_angles.append(np.mean(glint_angle))
+
+        self._glint_angles = glint_angles
+
+    def calc_albedo(self, threshold=None):
+
         wavelengths = self.wavelength
         if not isinstance(wavelengths, list):
             wavelengths = [wavelengths]
@@ -483,7 +504,11 @@ class AirMSPIMeasurements(shdom.Measurements):
         est_albedo_list =[]
         for image, sun_azimuth, sun_zenith, projection in zip (self.images, self.sun_azimuth_list, self.sun_zenith_list,
                                                                self._projections.projection_list):
-            ocean = np.mean(image[image < thresholds])
+            if threshold is None:
+                im_threshold = filters.threshold_otsu(image)
+            else:
+                im_threshold = threshold
+            ocean = np.mean(image[image < im_threshold])
             ocean_image = np.full(image.shape, ocean)
             grid = shdom.Grid(bounding_box=self.bb, nx=10, ny=10, nz=10)
             atmospheric_grid = grid + air.grid
@@ -566,7 +591,8 @@ class AirMSPIMeasurements(shdom.Measurements):
                 z = np.vstack((z, np.full(4, position_z, dtype=np.float32)))
         ax.quiver(x, y, z, u, v, w, length=length, pivot='tail')
 
-    def lla2flat(self, lla, llo, psio, href):
+    @staticmethod
+    def lla2flat(lla, llo, psio, href):
         '''
         lla  -- array of geodetic coordinates
                 (latitude, longitude, and altitude),

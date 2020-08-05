@@ -15,6 +15,8 @@ import dill as pickle
 import tensorboardX as tb
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from skimage import filters
+
 
 
 def save_dynamic_forward_model(directory, dynamic_medium, dynamic_solver, measurements):
@@ -3140,6 +3142,7 @@ class DynamicSpaceCarver(object):
             assert thresholds.size == len(self._images), 'thresholds (len={}) should be of the same' \
                                                          'length as the number of images (len={})'.format(
                 thresholds.size, len(self._images))
+
         best_match = -np.inf
 
         if gt_velocity is None:
@@ -3163,6 +3166,8 @@ class DynamicSpaceCarver(object):
                         image = image[..., -1]
                     if self._measurements.camera.sensor.type == 'StokesSensor':
                         image = image[0]
+                    if threshold < 0:
+                        threshold = filters.threshold_otsu(image)
 
                     image_mask = image > threshold
                     if verbose and first:

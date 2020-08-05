@@ -1,8 +1,10 @@
 import h5py, os, cv2, glob
+import pandas as pd
 import numpy as np
 import shdom
 from datetime import datetime
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize_scalar
 
 
 class AirMSPIMeasurements(shdom.Measurements):
@@ -141,11 +143,11 @@ class AirMSPIMeasurements(shdom.Measurements):
             Read sun's parameters for the optimization.
 
         """
+        sun_azimuth_list = []
+        sun_zenith_list = []
         for path, roi in zip(self._paths,self._region_of_interest):
             f = h5py.File(path, 'r')
             channels_data = f['HDFEOS']['GRIDS']
-            sun_azimuth_list = []
-            sun_zenith_list = []
             for param_name, param in channels_data.items():
                 if "band" in param_name:
                     if int(param_name[0:3]) in self._valid_wavelength:
@@ -451,6 +453,70 @@ class AirMSPIMeasurements(shdom.Measurements):
                 images.append(np.array(image))
         self._images = images
 
+    def calc_albedo(self, thresholds=0.005):
+        wavelengths = self.wavelength
+        if not isinstance(wavelengths, list):
+            wavelengths = [wavelengths]
+        assert len(wavelengths) == 1, 'should be generelized to multispectral if works'
+        # Mie scattering for water droplets
+        mie_table_paths = [
+            '../mie_tables/polydisperse/Water_{}nm.scat'.format(shdom.int_round(wavelength))
+            for wavelength in wavelengths
+        ]
+        solar_spectrum = shdom.SolarSpectrum('../ancillary_data/SpectralSolar_MODWehrli_1985_WMO.npz')
+        solar_fluxes = solar_spectrum.get_monochrome_solar_flux(wavelengths)
+        solar_flux = solar_fluxes
+        df = pd.read_csv('../ancillary_data/AFGL_summer_mid_lat.txt', comment='#', sep=' ')
+        temperatures = df['Temperature(k)'].to_numpy(dtype=np.float32)
+        altitudes = df['Altitude(km)'].to_numpy(dtype=np.float32)
+        temperature_profile = shdom.GridData(shdom.Grid(z=altitudes), temperatures)
+        air_grid = shdom.Grid(z=np.linspace(0, 20, 20))
+        air = shdom.MultispectralScatterer()
+        for wavelength, table_path in zip(wavelengths, mie_table_paths):
+            # Molecular Rayleigh scattering
+            rayleigh = shdom.Rayleigh(wavelength)
+            rayleigh.set_profile(temperature_profile.resample(air_grid))
+            air.add_scatterer(rayleigh.get_scatterer())
+
+        sensor = self.camera.sensor
+        albedo_opt_res_list = []
+        est_albedo_list =[]
+        for image, sun_azimuth, sun_zenith, projection in zip (self.images, self.sun_azimuth_list, self.sun_zenith_list,
+                                                               self._projections.projection_list):
+            ocean = np.mean(image[image < thresholds])
+            ocean_image = np.full(image.shape, ocean)
+            grid = shdom.Grid(bounding_box=self.bb, nx=10, ny=10, nz=10)
+            atmospheric_grid = grid + air.grid
+            atmosphere = shdom.Medium(atmospheric_grid)
+            atmosphere.add_scatterer(air, name='air')
+            albedo_opt_res = minimize_scalar(lambda albedo: self.calc_albedo_mse(albedo, wavelength, sun_azimuth, sun_zenith,\
+                                                                      solar_flux, atmosphere, ocean_image, sensor,\
+                                                                       projection), bounds=(0, 0.1), method='bounded')
+            albedo_opt_res_list.append(albedo_opt_res)
+            est_albedo = albedo_opt_res.x
+            est_albedo_list.append(est_albedo)
+        self._albedo_opt_res_list = albedo_opt_res_list
+        self._est_albedo_list = est_albedo_list
+
+    @staticmethod
+    def calc_albedo_mse(albedo, wavelength, sun_azimuth, sun_zenith, solar_flux, atmosphere, ocean_image, sensor, projection):
+        numerical_params = shdom.NumericalParameters()
+        rte_solvers = shdom.RteSolverArray()
+        scene_params = shdom.SceneParameters(
+            surface=shdom.LambertianSurface(albedo=albedo),
+            wavelength=wavelength,
+            source=shdom.SolarSource(azimuth=sun_azimuth,
+                                     zenith=sun_zenith, flux=solar_flux)
+        )
+        rte_solver = shdom.RteSolver(scene_params, numerical_params)
+        rte_solver.set_medium(atmosphere)
+        rte_solvers.add_solver(rte_solver)
+        rte_solvers.solve(maxiter=10)
+        camera = shdom.Camera(sensor=sensor, projection=projection)
+        rendered_image = camera.render(rte_solvers, n_jobs=40)
+        mse = np.mean(((rendered_image - ocean_image).ravel()) ** 2)
+        return mse
+
     def plot(self, ax, xlim, ylim, zlim, length=0.1):
         """
             Plot the cameras and their orientation in 3D space using matplotlib's quiver.
@@ -568,6 +634,10 @@ class AirMSPIMeasurements(shdom.Measurements):
     def bb(self):
         return self._bb
 
+    @property
+    def est_albedo_list(self):
+        return self._est_albedo_list
+
 
 class AirMSPIDynamicMeasurements(AirMSPIMeasurements, shdom.DynamicMeasurements):
     """
@@ -665,6 +735,7 @@ class AirMSPIDynamicMeasurements(AirMSPIMeasurements, shdom.DynamicMeasurements)
             assert self._acquisition_date == general_info['epoch_date']
             time_list.append((epoch_time - self._absolute_time).total_seconds() + relative_time)
         self._time_list = np.array(time_list)
+        self._num_viewed_mediums = self._time_list.size
 
     def set_camera(self):
         """

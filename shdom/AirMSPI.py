@@ -254,29 +254,29 @@ class AirMSPIMeasurements(shdom.Measurements):
         latitude = latitude[region_of_interest[0]:region_of_interest[1], region_of_interest[2]:region_of_interest[3]]
         longitude = np.array(channels_data_ancillary['Longitude'])
         longitude = longitude[region_of_interest[0]:region_of_interest[1], region_of_interest[2]:region_of_interest[3]]
+        projections_height = np.full(longitude.shape, 0)
         if len(f) == 2:
-            elevation = np.full(longitude.shape, 0)
+            ground_height = np.full(longitude.shape, 0)
         elif len(f) == 3:
-            # elevation = np.array(channels_data_ancillary['Elevation']) # [m]
-            # elevation = elevation[region_of_interest[0]:region_of_interest[1],
-            #             region_of_interest[2]:region_of_interest[3]]
-            elevation = np.full(longitude.shape, 0)
+            ground_height = np.array(channels_data_ancillary['Elevation']) # [m]
+            ground_height = ground_height[region_of_interest[0]:region_of_interest[1],
+                        region_of_interest[2]:region_of_interest[3]]
         else:
             assert 'Unsupported AirMSPI data version'
 
-        resolution = list(elevation.shape)
+        resolution = list(ground_height.shape)
 
         # -------------- Registration to 20 km altitude -------------
         # LLA(Latitude - Longitude - Altitude) to Flat surface(meters)
         airmspi_flight_altitude = 20.0  # km
-        lla = [latitude, longitude, elevation]
+        lla = [latitude, longitude, projections_height]
         if self._relative_coordinates is None:
             llo = [latitude.min(), longitude.min()]  # Origin of lat - long coordinate system
             self._relative_coordinates = [llo[0], llo[1], 0]
         else:
             llo = self._relative_coordinates[:-1]
         psio = 0  # Angle between X axis and North
-        href = 0  # Reference height
+        href = ground_height.min()  # Reference height
         flat_earth_pos = (np.array(self.lla2flat(lla, llo, psio, href)) / 1000)  # [Km] N-E coordinates
         # image reg with minimal ocean effect in this wl, View_zenith/azimuth equal for all wl
         channels_data = f['HDFEOS']['GRIDS']['355nm_band']['Data Fields'] # 355 was before

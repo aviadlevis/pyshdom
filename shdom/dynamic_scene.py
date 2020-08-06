@@ -594,11 +594,11 @@ class DynamicRteSolver(object):
         if isinstance(scene_params,list):
             self._scene_params = scene_params
         else:
-            self._scene_params = [scene_params]
+            self._scene_params = [[scene_params]]
         if isinstance(scene_params,list):
             self._numerical_params = numerical_params
         else:
-            self._numerical_params = [numerical_params]
+            self._numerical_params = [[numerical_params]]
         self._solver_array_list = []
         self._dynamic_medium = None
         self._wavelength = []
@@ -612,16 +612,28 @@ class DynamicRteSolver(object):
             self._wavelength = dynamic_medium.wavelength
         else:
             self._wavelength = [dynamic_medium.wavelength]
-        assert len(self._wavelength)==len(self._scene_params)==len(self._numerical_params)
-        medium_list = dynamic_medium.medium_list
-        for medium in medium_list:
-            medium_solver_list = []
-            for scene_params, numerical_params in zip(self._scene_params, self._numerical_params):
-                rte_solver = shdom.RteSolver()
-                rte_solver.set_scene(scene_params)
-                rte_solver.set_numerics(numerical_params)
-                medium_solver_list.append(rte_solver)
 
+        medium_list = dynamic_medium.medium_list
+        assert len(self._scene_params)==len(self._numerical_params)==1 or\
+               len(self._scene_params)==len(self._numerical_params)==len(medium_list)
+
+        scene_params = self._scene_params
+        numerical_params = self._numerical_params
+        if len(self._scene_params) == 1:
+            scene_params *= len(medium_list)
+        if len(numerical_params) == 1:
+            numerical_params *= len(medium_list)
+
+        for medium, scene_params_wls, numerical_params_wls in zip(medium_list, scene_params, numerical_params):
+            medium_solver_list = []
+            assert isinstance(scene_params_wls, list) and isinstance(numerical_params_wls, list)
+            assert len(scene_params_wls)==len(numerical_params_wls)==len(self._wavelength)
+            for scene_params_wl, numerical_params_wl, wl in zip(scene_params_wls, numerical_params_wls, self._wavelength):
+                assert wl == scene_params_wl.wavelength
+                rte_solver = shdom.RteSolver()
+                rte_solver.set_scene(scene_params_wl)
+                rte_solver.set_numerics(numerical_params_wl)
+                medium_solver_list.append(rte_solver)
             solver_array = shdom.RteSolverArray(medium_solver_list)
             solver_array.set_medium(medium)
             self._solver_array_list.append(solver_array)

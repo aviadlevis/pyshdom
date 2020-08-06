@@ -320,11 +320,9 @@ class OptimizationScript(object):
         medium_estimator = self.get_medium_estimator(measurements)
 
         # Initialize a RTESolver
-        dynamic_solver = self.get_rte_solver(measurements, medium_estimator)
+        dynamic_solver, cv_rte_solver = self.get_rte_solver(measurements, medium_estimator)
 
         if cv_index >= 0:
-            cv_rte_solver = shdom.DynamicRteSolver(scene_params=dynamic_solver._scene_params,
-                                                   numerical_params=dynamic_solver._numerical_params)
             cv_measurement, measurements = measurements.get_cross_validation_measurements(cv_index)
         measurements = measurements.downsample_viewed_mediums(self.args.num_mediums)
 
@@ -355,25 +353,66 @@ class OptimizationScript(object):
         return optimizer
 
     def get_rte_solver(self,measurements, medium_estimator):
-        scene_params_list = []
-        numerical_params_list = []
         wavelengths = measurements.wavelength
         if not isinstance(wavelengths,list):
             wavelengths = [wavelengths]
-        for wavelength, sun_azimuth, sun_zenith in zip(wavelengths, measurements.sun_azimuth_list,
-                                                       measurements.sun_zenith_list):
-            scene_params = shdom.SceneParameters(
-                wavelength=wavelength,
-                surface=shdom.LambertianSurface(albedo=0.005),
-                source=shdom.SolarSource(azimuth=sun_azimuth, zenith=sun_zenith)
-            )
-            scene_params_list.append(scene_params)
-            numerical_params = shdom.NumericalParameters(num_mu_bins=8, num_phi_bins=16, split_accuracy=0.1)
-            numerical_params_list.append(numerical_params)
+        sun_azimuth_list = measurements.sun_azimuth_list
+        sun_zenith_list = measurements.sun_zenith_list
+        est_albedo_list = measurements.est_albedo_list
 
-        dynamic_solver = shdom.DynamicRteSolver(scene_params=scene_params_list, numerical_params=numerical_params_list)
+        cv_index = self.args.use_cross_validation
+        num_of_mediums = self.args.num_mediums
+
+        cv_dynamic_solver = None
+        if cv_index >= 0:
+            cv_sun_azimuth = sun_azimuth_list[cv_index]
+            cv_sun_zenith = sun_zenith_list[cv_index]
+            cv_albedo = est_albedo_list[cv_index]
+            sun_azimuth_list = np.delete(sun_azimuth_list, cv_index)
+            sun_zenith_list = np.delete(sun_zenith_list, cv_index)
+            est_albedo_list = np.delete(est_albedo_list, cv_index)
+            sun_azimuth_list = np.mean(np.split(sun_azimuth_list, num_of_mediums), 1)
+            sun_zenith_list = np.mean(np.split(sun_zenith_list, num_of_mediums), 1)
+            est_albedo_list = np.mean(np.split(est_albedo_list, num_of_mediums), 1)
+
+        wl_scene_params_list =[]
+        wl_numerical_params_list =[]
+        for sun_azimuth, sun_zenith, albedo in zip(sun_azimuth_list, sun_zenith_list, est_albedo_list):
+            scene_params_list = []
+            numerical_params_list = []
+            for wavelength in wavelengths:
+                scene_params = shdom.SceneParameters(
+                    wavelength=wavelength,
+                    surface=shdom.LambertianSurface(albedo=albedo),
+                    source=shdom.SolarSource(azimuth=sun_azimuth, zenith=sun_zenith)
+                )
+                scene_params_list.append(scene_params)
+                numerical_params = shdom.NumericalParameters(num_mu_bins=8, num_phi_bins=16, split_accuracy=0.1)
+                numerical_params_list.append(numerical_params)
+            wl_scene_params_list.append(scene_params_list)
+            wl_numerical_params_list.append(numerical_params_list)
+        dynamic_solver = shdom.DynamicRteSolver(scene_params=wl_scene_params_list, numerical_params=wl_numerical_params_list)
         dynamic_solver.set_dynamic_medium(medium_estimator)
-        return dynamic_solver
+        if cv_index >= 0:
+            wl_scene_params_list = []
+            wl_numerical_params_list = []
+            scene_params_list = []
+            numerical_params_list = []
+            for wavelength in wavelengths:
+                scene_params = shdom.SceneParameters(
+                    wavelength=wavelength,
+                    surface=shdom.LambertianSurface(albedo=cv_albedo),
+                    source=shdom.SolarSource(azimuth=cv_sun_azimuth, zenith=cv_sun_zenith)
+                )
+                scene_params_list.append(scene_params)
+                numerical_params = shdom.NumericalParameters(num_mu_bins=8, num_phi_bins=16, split_accuracy=0.1)
+                numerical_params_list.append(numerical_params)
+            wl_scene_params_list.append(scene_params_list)
+            wl_numerical_params_list.append(numerical_params_list)
+            cv_dynamic_solver = shdom.DynamicRteSolver(scene_params=wl_scene_params_list,
+                                                    numerical_params=wl_numerical_params_list)
+
+        return dynamic_solver, cv_dynamic_solver
 
     def main(self):
         """

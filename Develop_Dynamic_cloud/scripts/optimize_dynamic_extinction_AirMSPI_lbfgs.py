@@ -97,6 +97,14 @@ class OptimizationScript(object):
                             choices=['l2', 'normcorr'],
                             default='l2',
                             help='Different loss functions for optimization. Currently only l2 is supported.')
+        parser.add_argument('--num_mu_bins',
+                            default=8,
+                            type=np.int,
+                            )
+        parser.add_argument('--num_phi_bins',
+                            default=16,
+                            type=np.int,
+                            )
         parser.add_argument('--assume_moving_cloud',
                             default=False,
                             action='store_true',
@@ -140,6 +148,9 @@ class OptimizationScript(object):
                             type=np.float32,
                             help='(default value: %(default)s) Threshold for the radiance to create a cloud mask.' \
                             'Threshold is either a scalar or a list of length of measurements.')
+        parser.add_argument('--space_carve_agreement',
+                            default=0.7,
+                            type=np.float32)
         parser.add_argument('--mie_base_path',
                             default='mie_tables/polydisperse/Water_<wavelength>nm.scat',
                             help='(default value: %(default)s) Mie table base file name. ' \
@@ -206,6 +217,7 @@ class OptimizationScript(object):
             time_list = np.delete(time_list, cv_index)
 
         assert isinstance(num_of_mediums, int) and num_of_mediums <= len(time_list)
+        time_list = np.mean(np.split(time_list, num_of_mediums), 1)
 
         wavelength = measurements.wavelength
         if not isinstance(wavelength,list):
@@ -222,7 +234,7 @@ class OptimizationScript(object):
 
         # Find a cloud mask for non-cloudy grid points
         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
-        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.70,
+        mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=self.args.space_carve_agreement,
                             time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
                             vx_max = 0, vy_max=0, gt_velocity = cloud_velocity)
         mask = mask_list[0]
@@ -237,14 +249,6 @@ class OptimizationScript(object):
         albedo = self.cloud_generator.get_albedo(wavelength[0], [albedo_grid] * num_of_mediums)
         phase = self.cloud_generator.get_phase(wavelength[0], [phase_grid] * num_of_mediums)
 
-        # cv_index = self.args.use_cross_validation
-        # if cv_index >= 0:
-        #     # del dynamic_grid[cv_index]
-        #     # del mask_list[cv_index]
-        #     # del albedo[cv_index]
-        #     # del phase[cv_index]
-        #     time_list = np.delete(measurements.time_list, cv_index)
-        time_list = np.mean(np.split(time_list, num_of_mediums), 1)
 
 
         extinction = shdom.DynamicGridDataEstimator(self.cloud_generator.get_extinction(wavelength[0], [grid] * num_of_mediums),
@@ -383,11 +387,11 @@ class OptimizationScript(object):
             for wavelength in wavelengths:
                 scene_params = shdom.SceneParameters(
                     wavelength=wavelength,
-                    surface=shdom.LambertianSurface(albedo=albedo),
+                    surface=shdom.LambertianSurface(albedo=0.008),
                     source=shdom.SolarSource(azimuth=sun_azimuth, zenith=sun_zenith)
                 )
                 scene_params_list.append(scene_params)
-                numerical_params = shdom.NumericalParameters(num_mu_bins=8, num_phi_bins=16, split_accuracy=0.1)
+                numerical_params = shdom.NumericalParameters(num_mu_bins=self.args.num_mu_bins, num_phi_bins=self.args.num_phi_bins)
                 numerical_params_list.append(numerical_params)
             wl_scene_params_list.append(scene_params_list)
             wl_numerical_params_list.append(numerical_params_list)
@@ -401,11 +405,11 @@ class OptimizationScript(object):
             for wavelength in wavelengths:
                 scene_params = shdom.SceneParameters(
                     wavelength=wavelength,
-                    surface=shdom.LambertianSurface(albedo=cv_albedo),
+                    surface=shdom.LambertianSurface(albedo=0.008),
                     source=shdom.SolarSource(azimuth=cv_sun_azimuth, zenith=cv_sun_zenith)
                 )
                 scene_params_list.append(scene_params)
-                numerical_params = shdom.NumericalParameters(num_mu_bins=8, num_phi_bins=16, split_accuracy=0.1)
+                numerical_params = shdom.NumericalParameters(num_mu_bins=self.args.num_mu_bins, num_phi_bins=self.args.num_phi_bins)
                 numerical_params_list.append(numerical_params)
             wl_scene_params_list.append(scene_params_list)
             wl_numerical_params_list.append(numerical_params_list)

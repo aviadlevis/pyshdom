@@ -1797,6 +1797,7 @@ class DynamicMediumEstimator(object):
 
 
         resolutions = measurements.camera.dynamic_projection.resolution
+        num_images = len(measurements.images)
         avg_npix = np.mean(resolutions)**2
         split_indices = np.cumsum(measurements.camera.dynamic_projection.npix[:-1])
         measurements = measurements.split(split_indices)
@@ -1811,7 +1812,7 @@ class DynamicMediumEstimator(object):
             grad_output = medium_estimator.compute_gradient(shdom.RteSolverArray(rte_solver),measurement,n_jobs)
             # data_gradient.extend(grad_output[0] / measurement.images.size/ len(measurements)) #unit less grad
             # data_loss += (grad_output[1] / measurement.images.size) #unit less loss
-            data_gradient.extend(grad_output[0] / self.num_mediums)
+            data_gradient.extend(grad_output[0]/ num_images)
             data_loss += (grad_output[1])
             image = grad_output[2]
             # resolution = measurement.images.shape
@@ -1820,10 +1821,10 @@ class DynamicMediumEstimator(object):
             #     new_shape.append(num_channels)
             # images.append(image.reshape(resolution, order='F'))
             images += image
-        loss.append(data_loss / self.num_mediums) #unit less loss
+        loss.append(data_loss / num_images) #unit less loss
         # loss.append(data_loss)
 
-        if regularization_const != 0 and len(self._medium_list) > 1:
+        if regularization_const != 0 and len(self.medium_list) > 1:
             regularization_loss, regularization_grad = self.compute_gradient_regularization(regularization_const, avg_npix)
             loss.append(regularization_loss)
             state_gradient = np.asarray(data_gradient) + regularization_grad

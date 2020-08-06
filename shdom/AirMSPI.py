@@ -288,17 +288,17 @@ class AirMSPIMeasurements(shdom.Measurements):
         channels_data = f['HDFEOS']['GRIDS']['865nm_band']['Data Fields'] # 355 was before
         I = np.array(channels_data['I'][region_of_interest[0]:region_of_interest[1],
                      region_of_interest[2]:region_of_interest[3]])
-        cloud_com_x, cloud_com_y = self.center_of_mass(I,flat_earth_pos[0],flat_earth_pos[1])
+        cloud_com_x, cloud_com_y = self.center_of_mass(I,flat_earth_pos[1],flat_earth_pos[0])
 
-        bb_x = flat_earth_pos[0] + self.cloud_min_h * np.tan(theta) * np.cos(phi) - cloud_com_x
-        bb_y = flat_earth_pos[1] + self.cloud_min_h * np.tan(theta) * np.cos(phi) - cloud_com_y
+        bb_x = flat_earth_pos[1] + self.cloud_min_h * np.tan(theta) * np.cos(phi) - cloud_com_x
+        bb_y = flat_earth_pos[0] + self.cloud_min_h * np.tan(theta) * np.cos(phi) - cloud_com_y
         self.set_cloud_bounding_box(bb_x, bb_y)
 
         xTranslation = (airmspi_flight_altitude) * np.tan(theta) * np.cos(phi) - cloud_com_x # X - North
         yTranslation = (airmspi_flight_altitude) * np.tan(theta) * np.sin(phi) - cloud_com_y # Y - East
 
-        x = flat_earth_pos[0] + xTranslation
-        y = flat_earth_pos[1] + yTranslation
+        x = flat_earth_pos[1] + xTranslation
+        y = flat_earth_pos[0] + yTranslation
         z = np.full(resolution, airmspi_flight_altitude)
 
         return shdom.Projection(x=x.ravel('F'), y=y.ravel('F'), z=z.ravel('F'), mu=mu.ravel('F'), phi=phi.ravel('F'),
@@ -334,8 +334,8 @@ class AirMSPIMeasurements(shdom.Measurements):
         """
         threshold_value = filters.threshold_otsu(I)
         I[I < threshold_value] = 0
-        com_y = np.sum(I * x) / np.sum(I)
-        com_x = np.sum(I * y) / np.sum(I)
+        com_x = np.sum(I * x) / np.sum(I)
+        com_y = np.sum(I * y) / np.sum(I)
         return com_x, com_y
 
     def get_projections_from_data(self):

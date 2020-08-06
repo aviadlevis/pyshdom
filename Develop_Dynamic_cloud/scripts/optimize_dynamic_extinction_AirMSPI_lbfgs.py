@@ -224,7 +224,7 @@ class OptimizationScript(object):
         dynamic_carver = shdom.DynamicSpaceCarver(measurements)
         mask_list, dynamic_grid, cloud_velocity = dynamic_carver.carve(grid, agreement=0.70,
                             time_list = measurements.time_list, thresholds=self.args.radiance_threshold,
-                            vx_max = 10, vy_max=10, gt_velocity = cloud_velocity)
+                            vx_max = 0, vy_max=0, gt_velocity = cloud_velocity)
         mask = mask_list[0]
         show_mask=1
         if show_mask:

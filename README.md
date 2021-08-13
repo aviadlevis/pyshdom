@@ -1,3 +1,10 @@
+
+:warning::warning::warning::warning::warning:
+Active development has trasferred to the following repository 
+:warning::warning::warning::warning::warning:
+https://github.com/CloudTomography/pyshdom 
+---
+
 # pyshdom
 
 Pyshdom performs 3D reconstruction of cloud microphysical properties from multi-angle, multi-spectral solar reflected radiation using a non-linear optimization procedure [[1],[2]]. The core radiative transfer routines are sourced from the Fortran SHDOM (Spherical Harmonic Discrete Ordinate Method for 3D Atmospheric Radiative Transfer) code by Frank K. Evans [[3]]. The python package was created by Aviad Levis, Amit Aides (Technion - Israel Institute of Technology) and Jesse Loveridge (University of Illinois).
